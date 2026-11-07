@@ -67,6 +67,8 @@ GOOSE_REFERENCE=/caminho/para/goose Tools/check_fidelity.sh
 
 ## Instalar no iPhone
 
+### Com um Mac
+
 O projeto já traz o bundle `com.beretdt.GooseIDE` e gera o `Info.plist`
 automaticamente, então não falta nenhum arquivo de configuração. Falta apenas
 escolher a sua equipe de assinatura:
@@ -82,6 +84,52 @@ escolher a sua equipe de assinatura:
    rode com `Cmd+R`.
 6. Na primeira execução o iOS bloqueia o app até você liberar em
    **Ajustes → Geral → VPN e Gerenciamento de Dispositivos**.
+
+### Sem um Mac
+
+Um app iOS precisa de assinatura para rodar em aparelho, e isso o Xcode faz por
+você. Sem Mac, o trabalho se divide: o CI compila, o seu computador assina e
+instala.
+
+**1. O CI produz um `.ipa` não assinado.** O workflow `Unsigned IPA` roda num
+runner macOS do GitHub e publica o artefato — não precisa de conta Apple:
+
+```sh
+gh workflow run build-ipa.yml
+gh run watch
+gh run download --name GooseIDE-unsigned-ipa
+```
+
+Ou baixe pela aba **Actions** do repositório. O `.ipa` sai com hash SHA-256 ao
+lado, para conferir o arquivo antes de instalar.
+
+**2. Assine e instale com o seu Apple ID.** O aparelho precisa de iOS 17 ou
+mais novo (arm64). Há duas opções:
+
+*A — AltServer-Linux, tudo pelo Kali.*
+
+```sh
+sudo apt install usbmuxd libimobiledevice-utils
+```
+
+Baixe o `AltServer` de `NyaMisty/AltServer-Linux`, conecte o iPhone por cabo e
+confie no computador, e rode o AltServer. Ele instala o **AltStore** no
+aparelho usando o seu Apple ID. Depois mande o `GooseIDE-unsigned.ipa` para o
+iPhone (AirDrop não existe no Linux; use o app Arquivos via nuvem, ou
+`ifuse`, ou um link de download) e abra pelo AltStore.
+
+*B — SideStore, sem depender de um processo rodando no PC.*
+O AltServer instala o SideStore uma vez; depois ele se renova sozinho pelo
+Wi-Fi usando um arquivo de emparelhamento gerado com `pymobiledevice3`.
+
+Em ambos os casos, com Apple ID grátis valem as regras da Apple: **7 dias de
+validade**, no máximo 3 apps assinados por conta, e o certificado precisa ser
+renovado — o AltStore/SideStore faz isso automaticamente enquanto o aparelho
+enxergar o computador na mesma rede.
+
+*C — Alugar um Mac na nuvem.* MacinCloud e similares cobram por hora e já vêm
+com Xcode; é o caminho mais próximo do "normal", e dispensa todo o processo de
+sideloading.
 
 O app funciona inteiramente no aparelho: nenhum código sai do telefone, e o
 programa em edição é salvo localmente (o rascunho volta ao reabrir o app).
