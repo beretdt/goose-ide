@@ -12,9 +12,12 @@ não envia código para nenhum servidor.
   AST e runtime.
 - Execução fora da thread principal, com limites de passos, profundidade de
   recursão e tamanho de saída para o app nunca travar.
-- 33 testes unitários e 10 programas de referência. As saídas esperadas vêm do
-  compilador Goose oficial (v2026.4), então o interpretador é conferido contra
-  a linguagem, não contra si mesmo.
+- Integração com o GitHub: abre um `.goose` de qualquer repositório e envia
+  commits pelo próprio iPhone, sem clonar e sem servidor no meio.
+- 48 testes unitários (33 do interpretador, 15 do cliente GitHub) e 10
+  programas de referência. As saídas do interpretador vêm do compilador Goose
+  oficial (v2026.4), então ele é conferido contra a linguagem, não contra si
+  mesmo.
 
 ### O que já funciona
 
@@ -38,6 +41,32 @@ Structs e enums:
 Slices: `a[1..4]`, `a[^2..]`, `a[..]`, `a[..2]`; aceitos por parâmetros
 `T[:]` e por `for`.
 
+## GitHub no app
+
+Menu **⋯ → GitHub**.
+
+| ação | o que faz |
+|---|---|
+| Conectar ao GitHub | guarda o token no Keychain do iPhone e mostra a conta |
+| Abrir do GitHub | lista repositórios, escolhe branch, lista os `.goose` e abre o arquivo no editor |
+| Commitar | envia o texto atual com mensagem, para a branch e o caminho escolhidos |
+
+Detalhes que valem saber:
+
+- O token é um personal access token. Fine-grained precisa de **Contents: read
+  and write** no repositório; clássico precisa do escopo `repo`.
+- O app fala direto com `api.github.com`; não há clone nem `git` no aparelho.
+- Ao abrir um arquivo, o app guarda o id do blob. No commit ele manda esse id
+  junto, então se alguém alterou o arquivo no meio do caminho o GitHub recusa
+  em vez de sobrescrever o trabalho de outra pessoa.
+- Depois de commitar, o id novo vem na própria resposta e é guardado, sem
+  requisição extra.
+- Erros aparecem em português: token inválido, sem permissão, arquivo que mudou,
+  caminho inexistente e limite de requisições com o horário de liberação.
+
+O cabeçalho do editor mostra `repositório · caminho` enquanto um arquivo do
+GitHub está aberto; escolher um exemplo limpa esse vínculo.
+
 ### O que ainda falta
 
 `import` e a biblioteca padrão (`std`, `vec`, `json`, `regex`…), optionais
@@ -55,6 +84,10 @@ interpretadores e compara a saída:
 swift build
 GOOSE_REFERENCE=/caminho/para/goose Tools/check_fidelity.sh
 ```
+
+O cliente GitHub tem testes próprios que não tocam na rede: o transporte HTTP
+é injetado, então cada chamada é conferida contra uma resposta fixa
+(`swift test --filter GooseGitHubTests`).
 
 `goosectl` (mesmo pacote) roda um arquivo solto:
 `.build/debug/goosectl run programa.goose`.
