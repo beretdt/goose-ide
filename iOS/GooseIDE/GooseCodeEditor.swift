@@ -355,7 +355,8 @@ enum GooseHighlighter {
     ]
 
     private static let controlKeywords: Set<String> = [
-        "if", "else", "while", "for", "in", "return", "break", "continue", "match", "recursive",
+        "if", "else", "while", "for", "in", "return", "break", "continue",
+        "match", "recursive", "loop", "block", "guard", "defer",
     ]
 
     private static let types: Set<String> = [

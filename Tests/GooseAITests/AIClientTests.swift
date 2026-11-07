@@ -226,7 +226,8 @@ final class AIClientTests: XCTestCase {
         let prompt = AIConfiguration.defaultSystemPrompt
         XCTAssertTrue(prompt.contains("```goose"))
         XCTAssertTrue(prompt.contains("recursive fn"))
-        XCTAssertTrue(prompt.contains("NÃO existe"))
+        XCTAssertTrue(prompt.contains("guard"))
+        XCTAssertTrue(prompt.contains("Não use"))
     }
 }
 

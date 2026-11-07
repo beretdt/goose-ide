@@ -21,6 +21,7 @@ enum GooseKeyword {
         "fn", "recursive", "let", "var", "if", "else", "while", "for", "in", "return",
         "true", "false", "break", "continue", "as", "null", "match",
         "struct", "enum", "import", "const",
+        "loop", "block", "guard", "defer",
     ]
 }
 
@@ -30,6 +31,6 @@ enum GooseSymbol {
         "->", "=>", "==", "!=", "<=", ">=", "&&", "||",
         "+=", "-=", "*=", "/=", "%=", "++", "--", "..",
         "{", "}", "(", ")", "[", "]", ",", ";", ".", ":", "+", "-",
-        "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "_",
+        "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "_", "?",
     ]
 }

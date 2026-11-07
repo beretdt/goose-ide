@@ -117,24 +117,31 @@ public struct AIConfiguration: Codable, Equatable, Sendable {
 
     O que o interpretador aceita hoje:
     - `fn` e `recursive fn` (obrigatório antes de recursão), `let`/`var`,
-      `return`, `break`, `continue`, `while`, `for i in n`, `for i in a..b`,
-      `for x in array`.
-    - `if`/`else if`/`else` e `match` como expressão; `match` com bind de
-      payload (`Circle c => c.r`), várias variantes por braço, literais,
-      faixas (`1..50`) e `_`.
-    - Operadores `+ - * / % == != < <= > >= && || !`, com largura de inteiro
-      preservada (`u8 + 42` estoura em 8 bits); `as` e `as!` para converter.
-    - `struct` com campos tipados e defaults; literais posicionais ou nomeados;
-      `enum` com e sem payload; slices `a[1..4]`, `a[^2..]`, `a[..]`.
-    - Arrays inline com `push`, `pop`, `append`, `.len`, `.cap`; `print(...)`
-      e `str(...)`.
-    - `u8[>..]` é texto.
+      `return`, `break`, `continue`, `while`, `loop { }`, `for i in n`,
+      `for i in a..b`, `for x in array` e `for &x in array` (com escrita de
+      volta no array).
+    - `if`/`else if`/`else`, `block { }`, `guard c;`, `guard c else { … }`
+      e `defer`.
+    - `match` como expressão, com bind do payload (`Circle c => c.r`), várias
+      variantes por braço, constantes, faixas (`1..50`) e `_`.
+    - Vários resultados: `fn f() -> i64, bool` com `return a, b;` e
+      `let x, y = f();`.
+    - Optionais simples: `i64?` no retorno, com `null`, comparáveis por
+      `==` e `!=`.
+    - Operadores `+ - * / %`, comparações, `&&`, `||`, `!`; a aritmética
+      mantém a largura do tipo (`u8 + 42` estoura em 8 bits) e `as`/`as!`
+      convertem.
+    - `struct` com campos tipados e valores padrão, literais por nome ou
+      posição, leitura e atribuição de campo; `enum` com e sem payload.
+    - Arrays `i64[>..]`, `[7, 8, 9]`, slices `a[1..4]`, `a[^2..]`, `a[..]`,
+      `.len`, `.cap`, `push`, `pop`, `append`.
+    - `print(...)` para tudo, `str(...)` para texto e `format(array, …)` para
+      escrever em um array de bytes. `u8[>..]` é texto.
 
-    O que NÃO existe ainda: `import`, biblioteca padrão (`std`, `vec`, `json`),
-    optionais `T?`, referências `&x`, `defer`, `guard`, `block`, `loop`,
-    retorno de múltiplos valores e enum em modo variável (`Shape..`). Não use
-    nada disso; se o pedido exigir, diga em uma frase e ofereça o equivalente
-    com o que existe.
+    Não use: `import`, biblioteca padrão (std, sort, vetores prontos), enum em
+    modo variável (`Shape..`), referências com dono (`T&`), nem funções que
+    não estejam nesta lista. Se o pedido exigir algo assim, diga em uma frase
+    e ofereça o equivalente com o que existe.
 
     Não invente funções da biblioteca padrão. Prefira código simples, com
     `print` para mostrar resultados, e nomes em português quando fizer sentido.

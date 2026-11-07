@@ -5,41 +5,57 @@ não envia código para nenhum servidor.
 
 ## Estado atual
 
-- App SwiftUI com editor monoespaçado, realce de sintaxe, barra de símbolos no
-  teclado e exemplos prontos (Fibonacci, arrays, structs, enums, slices,
-  FizzBuzz, laços).
-- Interpretador próprio em `Sources/GooseCore/`, dividido em lexer, parser,
-  AST e runtime.
-- Execução fora da thread principal, com limites de passos, profundidade de
-  recursão e tamanho de saída para o app nunca travar.
-- Integração com o GitHub: abre um `.goose` de qualquer repositório e envia
-  commits pelo próprio iPhone, sem clonar e sem servidor no meio.
-- 48 testes unitários (33 do interpretador, 15 do cliente GitHub) e 10
-  programas de referência. As saídas do interpretador vêm do compilador Goose
-  oficial (v2026.4), então ele é conferido contra a linguagem, não contra si
-  mesmo.
+O núcleo do app é **executar Goose**: o interpretador roda no aparelho, offline,
+e é conferido contra o compilador oficial em cada construção.
 
-### O que já funciona
+- App SwiftUI com tema VS Code Dark+, editor com numeração de linhas, barra de
+  símbolos no teclado e exemplos prontos.
+- Interpretador próprio em `Sources/GooseCore/` (lexer, parser, AST, runtime).
+- Execução fora da thread principal, com limites de passos, profundidade e
+  saída para o app nunca travar.
+- GitHub: abrir um `.goose` de um repositório e commitar pelo iPhone.
+- Agente de IA opcional (OpenRouter, GitHub Models ou endpoint compatível) que
+  escreve no editor ao vivo.
+- **67 testes** (46 do interpretador, 15 do cliente GitHub, 21 do cliente de IA)
+  e **14 programas de referência**. As saídas esperadas vêm do compilador Goose
+  oficial (v2026.4), então o interpretador é comparado com a linguagem, não
+  consigo mesmo.
 
-`fn` e `recursive fn`, `let`/`var`, `if`/`else if`/`else` como expressão,
-`while`, `for i in n`, `for i in a..b`, `for x in array`, `break`/`continue`,
-`return`, recursão, parâmetros sem tipo, operadores
-aritméticos/comparativos/lógicos, larguras de inteiro (`u8 + 42` estoura em 8
-bits e o literal adota a largura do outro operando), `as`/`as!`, arrays inline
-com `push`/`pop`/`append`, `.len`/`.cap`, `print(...)` e `str(...)`.
+### O que a linguagem já executa
 
-Structs e enums:
+Declarações e funções:
 
-- `struct` com campos tipados, defaults e literais posicionais ou nomeados;
-  atribuição copia o valor, como em Goose.
-- Aritmética elemento a elemento entre structs do mesmo tipo.
-- `enum` com variantes que têm payload e variantes sem payload;
-  `Shape.Circle { r: 1.0 }` e `Shape.Dot`.
-- `match` como expressão, com bind do payload (`Circle c => c.r`), várias
-  variantes por braço (`Circle, Dot => …`), literais, faixas (`1..50`) e `_`.
+- `fn` e `recursive fn` (obrigatório antes de recursão), parâmetros tipados ou
+  sem tipo, `return` com um ou vários valores.
+- `let` / `var`, com ou sem anotação de tipo; `let a, b = f();`.
 
-Slices: `a[1..4]`, `a[^2..]`, `a[..]`, `a[..2]`; aceitos por parâmetros
-`T[:]` e por `for`.
+Controle de fluxo:
+
+- `if` / `else if` / `else` como expressão; `match` com bind de payload,
+  várias variantes por braço, constantes, faixas (`1..50`) e `_`.
+- `while`, `loop { }`, `for i in n`, `for i in a..b`, `for x in array`,
+  `for &x in array` (com escrita de volta no array).
+- `break`, `continue`, `block { }` com `break valor`, `guard c;`,
+  `guard c else { … }` e `defer`.
+
+Valores:
+
+- Inteiros com largura (`u8 + 42` estoura em 8 bits e o literal adota a largura
+  do outro operando), `f64`, `bool`, texto e `null`.
+- `as` e `as!` para converter.
+- `struct` com campos tipados e defaults, literais por nome ou posição,
+  leitura e atribuição de campo, aritmética elemento a elemento.
+- `enum` com variantes com e sem payload; `Shape.Circle { r: 1.0 }`,
+  `Shape.Dot`.
+- Arrays `i64[>..]`, `[7, 8, 9]`, slices `a[1..4]`, `a[^2..]`, `a[..]`,
+  `.len`, `.cap`, `push`, `pop`, `append`.
+- `print(...)`, `str(...)` e `format(array, …)`; `u8[>..]` é texto.
+
+### O que ainda falta
+
+`import` e a biblioteca padrão (`std`, `sort`, `json`, `regex`…), `enum` em
+modo variável (`Shape..`), referências com dono (`T&`) e `format` de structs.
+O interpretador avisa com mensagem clara quando encontra `import` ou `const`.
 
 ## GitHub no app
 

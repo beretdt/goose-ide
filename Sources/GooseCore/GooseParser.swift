@@ -12,7 +12,9 @@ struct GooseParser {
     private let structNames: Set<String>
     private let enumNames: Set<String>
     private var index = 0
+    /// `break` needs a loop or a block to leave; the two are tracked apart.
     private var loopDepth = 0
+    private var blockDepth = 0
     private var nesting = 0
 
     init(tokens: [GooseToken]) {
@@ -22,9 +24,10 @@ struct GooseParser {
         enumNames = declared.enums
     }
 
-    /// A first pass over the tokens, so a literal may name a type declared
+    /// A first pass over the tokens, so a literal can mention a type declared
     /// further down the file.
-    private static func declaredTypes(in tokens: [GooseToken]) -> (structs: Set<String>, enums: Set<String>) {
+    private static func declaredTypes(in tokens: [GooseToken])
+        -> (structs: Set<String>, enums: Set<String>) {
         var structs: Set<String> = []
         var enums: Set<String> = []
 
@@ -66,7 +69,12 @@ struct GooseParser {
             }
         }
 
-        return GooseProgram(functions: functions, structs: structs, enums: enums, statements: statements)
+        return GooseProgram(
+            functions: functions,
+            structs: structs,
+            enums: enums,
+            statements: statements
+        )
     }
 
     // MARK: - Declarations
@@ -178,18 +186,18 @@ struct GooseParser {
             return try parseDeclaration()
         case "while":
             return try parseWhile()
+        case "loop":
+            return try parseLoopForever()
         case "for":
             return try parseForEach()
         case "return":
             return try parseReturn()
+        case "guard":
+            return try parseGuard()
+        case "defer":
+            return try parseDefer()
         case "break":
-            let line = current.line
-            guard loopDepth > 0 else {
-                throw syntaxError("'break' só pode ser usado dentro de um laço")
-            }
-            advance()
-            try consumeSymbol(";")
-            return .breakLoop(line: line)
+            return try parseBreak()
         case "continue":
             let line = current.line
             guard loopDepth > 0 else {
@@ -197,7 +205,7 @@ struct GooseParser {
             }
             advance()
             try consumeSymbol(";")
-            return .continueLoop(line: line)
+            return .continueFlow(line: line)
         case "fn", "recursive", "struct", "enum":
             throw syntaxError("Declarações de tipo e função ficam no nível superior")
         default:
@@ -210,7 +218,11 @@ struct GooseParser {
         let mutable = currentKeyword == "var"
         advance()
 
-        let name = try consumeName()
+        var names = [try consumeName()]
+        while consumeSymbolIf(",") {
+            names.append(try consumeName())
+        }
+
         var typeName: String?
         if isSymbol(":") {
             typeName = try parseTypeName()
@@ -218,7 +230,7 @@ struct GooseParser {
         try consumeSymbol("=")
         let value = try parseExpression()
         try consumeSymbol(";")
-        return .declare(name: name, mutable: mutable, typeName: typeName, value: value, line: line)
+        return .declare(names: names, mutable: mutable, typeName: typeName, value: value, line: line)
     }
 
     private mutating func parseWhile() throws -> GooseStatement {
@@ -233,15 +245,29 @@ struct GooseParser {
         return .loopWhile(condition, body, line: line)
     }
 
+    private mutating func parseLoopForever() throws -> GooseStatement {
+        let line = current.line
+        try consumeKeyword("loop")
+
+        loopDepth += 1
+        let body = try parseBlock()
+        loopDepth -= 1
+
+        return .loopForever(body, line: line)
+    }
+
     private mutating func parseForEach() throws -> GooseStatement {
         let line = current.line
         try consumeKeyword("for")
+
+        // `for &x in xs` binds by reference: the writes go back to the array.
+        let byReference = consumeSymbolIf("&")
         let name = try consumeName()
         try consumeKeyword("in")
 
         var iterable = try parseExpression()
         if consumeSymbolIf("..") {
-            // `for i in a..b` stops before `b`, like an exclusive range.
+            // `for i in a..b` stops before `b`.
             let upper = try parseExpression()
             iterable = .range(iterable, upper, line: line)
         }
@@ -250,22 +276,96 @@ struct GooseParser {
         let body = try parseBlock()
         loopDepth -= 1
 
-        return .forEach(name: name, iterable: iterable, body: body, line: line)
+        return .forEach(
+            name: name,
+            byReference: byReference,
+            iterable: iterable,
+            body: body,
+            line: line
+        )
     }
 
     private mutating func parseReturn() throws -> GooseStatement {
         let line = current.line
         try consumeKeyword("return")
         if consumeSymbolIf(";") {
-            return .returnValue(nil, line: line)
+            return .returnValues([], line: line)
         }
+
+        var values = [try parseExpression()]
+        while consumeSymbolIf(",") {
+            values.append(try parseExpression())
+        }
+        try consumeSymbol(";")
+        return .returnValues(values, line: line)
+    }
+
+    private mutating func parseGuard() throws -> GooseStatement {
+        let line = current.line
+        try consumeKeyword("guard")
+        let condition = try parseExpression()
+
+        // `guard c;` runs the rest of the block only where `c` holds.
+        if consumeSymbolIf(";") {
+            return .guardCondition(condition, [], line: line)
+        }
+
+        try consumeKeyword("else")
+        let body = try parseBlock()
+        return .guardCondition(condition, body, line: line)
+    }
+
+    private mutating func parseDefer() throws -> GooseStatement {
+        let line = current.line
+        try consumeKeyword("defer")
+
+        // `defer statement;` and `defer { … }` both work in Goose.
+        if isSymbol("{") {
+            return .deferBlock(try parseBlock(), line: line)
+        }
+        return .deferBlock([try parseStatement()], line: line)
+    }
+
+    private mutating func parseBreak() throws -> GooseStatement {
+        let line = current.line
+        guard loopDepth > 0 || blockDepth > 0 else {
+            throw syntaxError("'break' só pode ser usado dentro de um laço ou de um block")
+        }
+        advance()
+
+        // `break` alone leaves a loop; `break value` leaves a block with it.
+        if consumeSymbolIf(";") {
+            return .breakFlow(nil, line: line)
+        }
+
         let value = try parseExpression()
         try consumeSymbol(";")
-        return .returnValue(value, line: line)
+        return .breakFlow(value, line: line)
     }
 
     private mutating func parseExpressionStatement() throws -> GooseStatement {
         let expression = try parseExpression()
+
+        if isSymbol(",") {
+            // `a, b = f()` assigns several results at once.
+            var targets = [expression]
+            while consumeSymbolIf(",") {
+                targets.append(try parseExpression())
+            }
+            guard let op = assignmentOperator else {
+                throw syntaxError("Esperado '=' depois de vários alvos")
+            }
+            advance()
+            let value = try parseExpression()
+            try consumeSymbol(";")
+            guard targets.allSatisfy(isAssignable) else {
+                throw GooseInterpreterError.syntax(
+                    line: expression.line,
+                    message: "Não é possível atribuir a esta expressão"
+                )
+            }
+            return .assign(targets: targets, op: op, value: value, line: expression.line)
+        }
 
         if let op = assignmentOperator {
             advance()
@@ -277,7 +377,7 @@ struct GooseParser {
                     message: "Não é possível atribuir a esta expressão"
                 )
             }
-            return .assign(target: expression, op: op, value: value, line: expression.line)
+            return .assign(targets: [expression], op: op, value: value, line: expression.line)
         }
 
         if isSymbol("++") || isSymbol("--") {
@@ -291,7 +391,7 @@ struct GooseParser {
                 )
             }
             let one = GooseExpression.integer("1", line: expression.line)
-            return .assign(target: expression, op: op, value: one, line: expression.line)
+            return .assign(targets: [expression], op: op, value: one, line: expression.line)
         }
 
         // A block, an `if` chain or a `match` stands on its own, and the
@@ -378,6 +478,12 @@ struct GooseParser {
             advance()
             return .fromEnd(try parseUnary(), line: line)
         }
+        // `&x` and `&mut x` are references; the interpreter is dynamically
+        // typed, so the marker is accepted and the value passes through.
+        if isSymbol("&") {
+            advance()
+            return try parseUnary()
+        }
         return try parsePostfix()
     }
 
@@ -406,7 +512,8 @@ struct GooseParser {
                 // The interpreter truncates like a release build; `as!` is
                 // accepted as the same operation.
                 _ = consumeSymbolIf("!")
-                expression = .cast(expression, try parseTypeName(), checked: false, line: expression.line)
+                let typeName = try parseTypeName()
+                expression = .cast(expression, typeName, checked: false, line: expression.line)
             } else {
                 break
             }
@@ -487,6 +594,13 @@ struct GooseParser {
                 return try parseConditional()
             case "match":
                 return try parseMatch()
+            case "block":
+                let line = token.line
+                advance()
+                blockDepth += 1
+                let body = try parseBlock()
+                blockDepth -= 1
+                return .block(body, line: line)
             default:
                 throw GooseInterpreterError.syntax(
                     line: token.line,
@@ -501,8 +615,7 @@ struct GooseParser {
                 return .call(name, try parseArguments(), line: token.line)
             }
             if isSymbol("{"), structNames.contains(name) {
-                let arguments = try parseLiteralArguments()
-                return .structLiteral(name, arguments, line: token.line)
+                return .structLiteral(name, try parseLiteralArguments(), line: token.line)
             }
             return .variable(name, line: token.line)
 
@@ -688,7 +801,8 @@ struct GooseParser {
         return statements
     }
 
-    /// Reads a type annotation such as `u8`, `f64`, `i64[>..]` or `Shape`.
+    /// Reads a type annotation such as `u8`, `f64`, `i64[>..]`, `Shape` or
+    /// `i64?`.
     private mutating func parseTypeName() throws -> String {
         if isSymbol(":") {
             advance()

@@ -46,6 +46,8 @@ enum GoosePattern {
     case variant(String, binder: String?)
     case integer(Int64)
     case range(Int64, Int64)
+    /// `Circle, Dot` binding nothing; also matches a named constant.
+    case name(String)
 }
 
 struct GooseMatchArm {
@@ -78,6 +80,7 @@ indirect enum GooseExpression {
     case arrayFill(GooseExpression, GooseExpression, line: Int)
     case conditional(GooseExpression, [GooseStatement], [GooseStatement]?, line: Int)
     case match(GooseExpression, [GooseMatchArm], line: Int)
+    /// `block { … }`, which may end with `break value`.
     case block([GooseStatement], line: Int)
     case cast(GooseExpression, String, checked: Bool, line: Int)
     /// `Type { 1, 2 }` or `Type { field: 1 }`.
@@ -90,6 +93,8 @@ indirect enum GooseExpression {
     case fromEnd(GooseExpression, line: Int)
     /// `a..b` in a `for`, exclusive of `b`.
     case range(GooseExpression, GooseExpression, line: Int)
+    /// `a, b` in `return a, b;`.
+    case tuple([GooseExpression], line: Int)
 
     var line: Int {
         switch self {
@@ -103,7 +108,8 @@ indirect enum GooseExpression {
              let .conditional(_, _, _, line), let .match(_, _, line),
              let .block(_, line), let .cast(_, _, _, line),
              let .structLiteral(_, _, line), let .variantLiteral(_, _, _, line),
-             let .slice(_, _, _, line), let .fromEnd(_, line), let .range(_, _, line):
+             let .slice(_, _, _, line), let .fromEnd(_, line),
+             let .range(_, _, line), let .tuple(_, line):
             return line
         }
     }
@@ -112,12 +118,23 @@ indirect enum GooseExpression {
 // MARK: - Statements
 
 indirect enum GooseStatement {
-    case declare(name: String, mutable: Bool, typeName: String?, value: GooseExpression, line: Int)
-    case assign(target: GooseExpression, op: String, value: GooseExpression, line: Int)
+    /// `let a = …`, `var a: T = …`, and `let a, b = f()`.
+    case declare(names: [String], mutable: Bool, typeName: String?, value: GooseExpression, line: Int)
+    /// `a = …`, `a += …`, and `a, b = f()`.
+    case assign(targets: [GooseExpression], op: String, value: GooseExpression, line: Int)
     case expression(GooseExpression)
     case loopWhile(GooseExpression, [GooseStatement], line: Int)
-    case forEach(name: String, iterable: GooseExpression, body: [GooseStatement], line: Int)
-    case returnValue(GooseExpression?, line: Int)
-    case breakLoop(line: Int)
-    case continueLoop(line: Int)
+    /// `loop { … }`.
+    case loopForever([GooseStatement], line: Int)
+    /// `for x in …` and, with `byReference`, `for &x in array`.
+    case forEach(name: String, byReference: Bool, iterable: GooseExpression, body: [GooseStatement], line: Int)
+    /// `return;`, `return v;` and `return a, b;`.
+    case returnValues([GooseExpression], line: Int)
+    /// `guard condition else { … }`.
+    case guardCondition(GooseExpression, [GooseStatement], line: Int)
+    /// `defer { … }`, run when the enclosing block ends.
+    case deferBlock([GooseStatement], line: Int)
+    /// `break;` and `break value;`.
+    case breakFlow(GooseExpression?, line: Int)
+    case continueFlow(line: Int)
 }

@@ -23,7 +23,7 @@ struct GooseInteger: Equatable {
         }
         let mask = (UInt64(1) << UInt64(bits)) - 1
         var raw = UInt64(bitPattern: value) & mask
-        if isSigned, raw & (UInt64(1) << UInt64(bits - 1)) != 0 {
+        if isSigned, (raw & (UInt64(1) << UInt64(bits - 1))) != 0 {
             raw |= ~mask
         }
         var result = self
@@ -39,21 +39,30 @@ struct GooseInteger: Equatable {
         return String(UInt64(bitPattern: value))
     }
 
-    func asIntegerType(bits newBits: Int, signed: Bool, checked: Bool) throws -> GooseInteger {
-        let target = GooseInteger(value: value, bits: newBits, isSigned: signed, isLiteral: false).normalized()
-        if checked, target.value != value {
+    func asIntegerType(
+        bits newBits: Int,
+        signed: Bool,
+        checked: Bool
+    ) throws -> GooseInteger {
+        let target = GooseInteger(
+            value: value,
+            bits: newBits,
+            isSigned: signed,
+            isLiteral: false
+        ).normalized()
+        if checked && target.value != value {
             throw GooseInterpreterError.runtime(
                 line: 0,
-                message: "valor \(display) não cabe em \(signed ? "i" : "u")\(newBits)"
+                message: "valor \(value) não cabe em \(signed ? "i" : "u")\(newBits)"
             )
         }
         return target
     }
 }
 
-final class GooseArray {
+struct GooseArray {
     var elements: [GooseValue]
-    /// A `u8` array is text in Goose: it prints as characters, not numbers.
+    /// `u8[...]` is text in Goose: it prints as characters, not numbers.
     var isByteArray: Bool
 
     init(_ elements: [GooseValue] = [], isByteArray: Bool = false) {
@@ -79,7 +88,6 @@ final class GooseArray {
 }
 
 /// A struct value, or an enum value (`variant` is set for the latter).
-/// It is a Swift struct, so assignment copies it, as Goose does.
 struct GooseComposite {
     let typeName: String
     let variant: String?
@@ -90,7 +98,24 @@ struct GooseComposite {
     }
 
     func copied() -> GooseComposite {
-        GooseComposite(typeName: typeName, variant: variant, fields: fields.map { ($0.name, $0.value.copied) })
+        GooseComposite(
+            typeName: typeName,
+            variant: variant,
+            fields: fields.map { ($0.name, $0.value.copied) }
+        )
+    }
+
+    /// A struct prints its type and every field; a variant with a payload
+    /// prints its variant, and one without prints `Enum.Variant`.
+    func render() -> String {
+        let values = fields.map { $0.value.render(nested: true) }.joined(separator: ", ")
+        guard let variant else {
+            return "\(typeName) { \(values) }"
+        }
+        guard !fields.isEmpty else {
+            return "\(typeName).\(variant)"
+        }
+        return "\(variant) { \(values) }"
     }
 }
 
@@ -102,6 +127,8 @@ enum GooseValue {
     case array(GooseArray)
     case composite(GooseComposite)
     case null
+    /// Only `return a, b` and a call of such a function produce one.
+    case tuple([GooseValue])
 
     /// `nested` is true inside a container, where a byte array shows quotes.
     func render(nested: Bool = false) -> String {
@@ -122,6 +149,8 @@ enum GooseValue {
             return "[" + array.elements.map { $0.render(nested: true) }.joined(separator: ", ") + "]"
         case let .composite(composite):
             return composite.render()
+        case let .tuple(values):
+            return values.map { $0.render(nested: nested) }.joined()
         case .null:
             return "null"
         }
@@ -137,37 +166,34 @@ enum GooseValue {
             return .array(array.copied())
         case let .composite(composite):
             return .composite(composite.copied())
+        case let .tuple(values):
+            return .tuple(values.map(\.copied))
         default:
             return self
         }
     }
-}
 
-extension GooseComposite {
-    /// A struct prints its type and every field; an enum variant with a
-    /// payload prints its variant, and one without prints `Enum.Variant`.
-    func render() -> String {
-        if variant == nil {
-            let values = fields.map { $0.value.render(nested: true) }.joined(separator: ", ")
-            return "\(typeName) { \(values) }"
+    /// Unwraps a one-element tuple, which is what a single-result function
+    /// hands back after `return value;`.
+    var single: GooseValue {
+        if case let .tuple(values) = self, values.count == 1 {
+            return values[0]
         }
-        guard !fields.isEmpty else {
-            return "\(typeName).\(variant ?? "")"
-        }
-        let values = fields.map { $0.value.render(nested: true) }.joined(separator: ", ")
-        return "\(variant ?? "") { \(values) }"
+        return self
     }
 }
 
 // MARK: - Environment
 
 final class GooseEnvironment {
-    private var values: [String: GooseValue] = [:]
-    private var mutables: Set<String> = []
+    private var values: [String: GooseValue]
+    private var mutables: Set<String>
     let parent: GooseEnvironment?
 
     init(parent: GooseEnvironment? = nil) {
         self.parent = parent
+        values = [:]
+        mutables = []
     }
 
     func declare(_ name: String, mutable: Bool, value: GooseValue) {
@@ -212,9 +238,10 @@ final class GooseEnvironment {
 /// `return`, `break` and `continue` travel as errors so that they cross
 /// expression boundaries (`if`, `match`, blocks) without being lost.
 enum GooseControlFlow: Error {
-    case returned(GooseValue)
+    case returned([GooseValue])
     case breakLoop
     case continueLoop
+    case breakBlock(GooseValue)
 }
 
 // MARK: - Runtime
@@ -253,12 +280,35 @@ final class GooseRuntime {
         _ statements: [GooseStatement],
         in environment: GooseEnvironment
     ) throws -> GooseValue {
-        var last: GooseValue = .null
-        for statement in statements {
-            try spendStep()
-            last = try execute(statement, in: environment)
+        var deferred: [[GooseStatement]] = []
+
+        do {
+            var last: GooseValue = .null
+            for statement in statements {
+                try spendStep()
+                if case let .deferBlock(body, _) = statement {
+                    // Registered now, run in reverse when the block ends,
+                    // which is what `defer` promises.
+                    deferred.append(body)
+                    continue
+                }
+                last = try execute(statement, in: environment)
+            }
+            try runDeferred(deferred, in: environment)
+            return last
+        } catch {
+            try? runDeferred(deferred, in: environment)
+            throw error
         }
-        return last
+    }
+
+    private func runDeferred(
+        _ blocks: [[GooseStatement]],
+        in environment: GooseEnvironment
+    ) throws {
+        for body in blocks.reversed() {
+            _ = try execute(body, in: GooseEnvironment(parent: environment))
+        }
     }
 
     private func execute(
@@ -266,27 +316,18 @@ final class GooseRuntime {
         in environment: GooseEnvironment
     ) throws -> GooseValue {
         switch statement {
-        case let .declare(name, mutable, typeName, value, line):
+        case let .declare(names, mutable, typeName, value, line):
             let evaluated = try evaluate(value, in: environment)
-            let coerced = try typeName.map { try coerce(evaluated, to: $0, line: line) } ?? evaluated
-            environment.declare(name, mutable: mutable, value: coerced.copied)
+            try declare(names, from: evaluated, mutable: mutable, typeName: typeName, line: line, environment)
             return .null
 
-        case let .assign(target, op, value, line):
+        case let .assign(targets, op, value, line):
             let right = try evaluate(value, in: environment)
-            let result = op == "="
-                ? right
-                : try applyBinary(
-                    String(op.dropLast()),
-                    try evaluate(target, in: environment),
-                    right,
-                    line: line
-                )
-            try assign(result, to: target, in: environment, line: line)
+            try assign(targets, from: right, op: op, line: line, environment)
             return .null
 
         case let .expression(expression):
-            return try evaluate(expression, in: environment)
+            return try evaluate(expression, in: environment).single
 
         case let .loopWhile(condition, body, _):
             while try isTrue(condition, in: environment) {
@@ -301,23 +342,144 @@ final class GooseRuntime {
             }
             return .null
 
-        case let .forEach(name, iterable, body, line):
-            return try executeForEach(name, iterable, body, line, environment)
+        case let .loopForever(body, _):
+            while true {
+                try spendStep()
+                do {
+                    _ = try execute(body, in: GooseEnvironment(parent: environment))
+                } catch GooseControlFlow.breakLoop {
+                    break
+                } catch GooseControlFlow.continueLoop {
+                    continue
+                }
+            }
+            return .null
 
-        case let .returnValue(expression, _):
-            let value = try expression.map { try evaluate($0, in: environment) } ?? .null
-            throw GooseControlFlow.returned(value)
+        case let .forEach(name, byReference, iterable, body, line):
+            return try executeForEach(
+                name,
+                byReference: byReference,
+                iterable,
+                body,
+                line,
+                environment
+            )
 
-        case .breakLoop:
+        case let .returnValues(expressions, line):
+            guard !expressions.isEmpty else {
+                throw GooseControlFlow.returned([])
+            }
+            var values: [GooseValue] = []
+            for expression in expressions {
+                let value = try evaluate(expression, in: environment).single
+                values.append(value)
+            }
+            if values.count > 1, let only = values.first, case let .tuple(inner) = only {
+                values = inner
+            }
+            _ = line
+            throw GooseControlFlow.returned(values)
+
+        case let .guardCondition(condition, elseBody, line):
+            guard try isTrue(condition, in: environment) else {
+                // `guard c;` ends the rest of the block quietly; with an else,
+                // that block has to leave, and saying so beats continuing.
+                guard !elseBody.isEmpty else {
+                    throw GooseControlFlow.breakBlock(.null)
+                }
+                _ = try execute(elseBody, in: GooseEnvironment(parent: environment))
+                throw GooseInterpreterError.runtime(
+                    line: line,
+                    message: "o else de um guard precisa sair (return, break ou continue)"
+                )
+            }
+            return .null
+
+        case let .deferBlock(body, _):
+            // Handled by `execute(_:in:)`, which keeps the list.
+            _ = body
+            return .null
+
+        case let .breakFlow(expression, line):
+            if let expression {
+                let value = try evaluate(expression, in: environment).single
+                throw GooseControlFlow.breakBlock(value)
+            }
+            _ = line
             throw GooseControlFlow.breakLoop
 
-        case .continueLoop:
+        case .continueFlow:
             throw GooseControlFlow.continueLoop
+        }
+    }
+
+    /// Binds one value per name, spreading a tuple when there is more than one.
+    private func declare(
+        _ names: [String],
+        from value: GooseValue,
+        mutable: Bool,
+        typeName: String?,
+        line: Int,
+        _ environment: GooseEnvironment
+    ) throws {
+        if names.count == 1 {
+            let coerced = try typeName.map { try coerce(value.single, to: $0, line: line) } ?? value.single
+            environment.declare(names[0], mutable: mutable, value: coerced.copied)
+            return
+        }
+
+        guard case let .tuple(values) = value, values.count == names.count else {
+            throw GooseInterpreterError.runtime(
+                line: line,
+                message: "\(names.count) nome(s) precisam de \(names.count) resultado(s), veio \(value.rendered)"
+            )
+        }
+        for (name, item) in zip(names, values) {
+            environment.declare(name, mutable: mutable, value: item.copied)
+        }
+    }
+
+    private func assign(
+        _ targets: [GooseExpression],
+        from value: GooseValue,
+        op: String,
+        line: Int,
+        _ environment: GooseEnvironment
+    ) throws {
+        if targets.count == 1 {
+            let target = targets[0]
+            let result = op == "="
+                ? value.single
+                : try applyBinary(
+                    String(op.dropLast()),
+                    try evaluate(target, in: environment).single,
+                    value.single,
+                    line: line
+                )
+            try assign(result, to: target, in: environment, line: line)
+            return
+        }
+
+        guard op == "=" else {
+            throw GooseInterpreterError.runtime(
+                line: line,
+                message: "atribuição composta só funciona com um alvo"
+            )
+        }
+        guard case let .tuple(values) = value, values.count == targets.count else {
+            throw GooseInterpreterError.runtime(
+                line: line,
+                message: "\(targets.count) alvo(s) precisam de \(targets.count) resultado(s)"
+            )
+        }
+        for (target, item) in zip(targets, values) {
+            try assign(item.copied, to: target, in: environment, line: line)
         }
     }
 
     private func executeForEach(
         _ name: String,
+        byReference: Bool,
         _ iterable: GooseExpression,
         _ body: [GooseStatement],
         _ line: Int,
@@ -328,7 +490,7 @@ final class GooseRuntime {
         func iteration(_ value: GooseValue) throws -> Bool {
             try spendStep()
             let scope = GooseEnvironment(parent: environment)
-            scope.declare(name, mutable: false, value: value.copied)
+            scope.declare(name, mutable: byReference, value: value.copied)
             do {
                 _ = try execute(body, in: scope)
             } catch GooseControlFlow.breakLoop {
@@ -346,7 +508,39 @@ final class GooseRuntime {
             }
             return .null
 
-        case let .array(array):
+        case var .array(array):
+            if byReference {
+                // `for &x in xs` writes the binding back, which is the
+                // mutation form of the loop.
+                guard try isMutableRoot(iterable, in: environment) else {
+                    throw GooseInterpreterError.runtime(
+                        line: line,
+                        message: "for &x exige um array que possa ser alterado"
+                    )
+                }
+
+                for offset in array.elements.indices {
+                    let scope = GooseEnvironment(parent: environment)
+                    scope.declare(name, mutable: true, value: array.elements[offset].copied)
+                    var stopped = false
+                    do {
+                        _ = try execute(body, in: scope)
+                    } catch GooseControlFlow.breakLoop {
+                        stopped = true
+                    } catch GooseControlFlow.continueLoop {
+                        // A continue still keeps whatever the body wrote.
+                    }
+                    if let updated = scope.lookup(name) {
+                        array.elements[offset] = updated
+                    }
+                    if stopped { break }
+                }
+
+                // The array is a value here, so the writes go back to it.
+                try assign(.array(array), to: iterable, in: environment, line: line)
+                return .null
+            }
+
             for element in array.elements {
                 guard try iteration(element) else { return .null }
             }
@@ -377,11 +571,17 @@ final class GooseRuntime {
                     message: "Não é possível alterar um array declarado com let"
                 )
             }
-            guard case let .array(array) = try evaluate(base, in: environment) else {
+            guard case var .array(array) = try evaluate(base, in: environment) else {
                 throw GooseInterpreterError.runtime(line: line, message: "Só arrays aceitam índice")
             }
-            let position = try arrayIndex(indexExpression, in: environment, count: array.elements.count, line: line)
+            let position = try arrayIndex(
+                indexExpression,
+                in: environment,
+                count: array.elements.count,
+                line: line
+            )
             array.elements[position] = value.copied
+            try writeBack(.array(array), to: base, in: environment, line: line)
 
         case let .field(base, name, _):
             guard try isMutableRoot(base, in: environment) else {
@@ -403,14 +603,28 @@ final class GooseRuntime {
                 )
             }
             composite.fields[position].value = value.copied
-            try assign(.composite(composite), to: base, in: environment, line: line)
+            try writeBack(.composite(composite), to: base, in: environment, line: line)
 
         default:
             throw GooseInterpreterError.runtime(line: line, message: "Alvo de atribuição inválido")
         }
     }
 
-    private func isMutableRoot(_ expression: GooseExpression, in environment: GooseEnvironment) throws -> Bool {
+    /// Arrays and structs are values here, so a change made through an index
+    /// or a field has to be written back into whatever holds them.
+    private func writeBack(
+        _ value: GooseValue,
+        to target: GooseExpression,
+        in environment: GooseEnvironment,
+        line: Int
+    ) throws {
+        try assign(value, to: target, in: environment, line: line)
+    }
+
+    private func isMutableRoot(
+        _ expression: GooseExpression,
+        in environment: GooseEnvironment
+    ) throws -> Bool {
         switch expression {
         case let .variable(name, _):
             return environment.isMutable(name)
@@ -452,7 +666,7 @@ final class GooseRuntime {
             return value
 
         case let .unary(op, operand, line):
-            return try applyUnary(op, try evaluate(operand, in: environment), line: line)
+            return try applyUnary(op, try evaluate(operand, in: environment).single, line: line)
 
         case let .binary(op, left, right, line):
             if op == "&&" {
@@ -463,8 +677,8 @@ final class GooseRuntime {
             }
             return try applyBinary(
                 op,
-                try evaluate(left, in: environment),
-                try evaluate(right, in: environment),
+                try evaluate(left, in: environment).single,
+                try evaluate(right, in: environment).single,
                 line: line
             )
 
@@ -478,19 +692,25 @@ final class GooseRuntime {
             return try readField(receiver, name: name, in: environment, line: line)
 
         case let .index(base, indexExpression, line):
-            let container = try evaluate(base, in: environment)
+            let container = try evaluate(base, in: environment).single
             guard case let .array(array) = container else {
                 throw GooseInterpreterError.runtime(line: line, message: "Só arrays aceitam índice")
             }
-            let position = try arrayIndex(indexExpression, in: environment, count: array.elements.count, line: line)
+            let position = try arrayIndex(
+                indexExpression,
+                in: environment,
+                count: array.elements.count,
+                line: line
+            )
             return array.elements[position]
 
         case let .arrayLiteral(elements, _):
-            return .array(GooseArray(try elements.map { try evaluate($0, in: environment) }))
+            return .array(GooseArray(try elements.map { try evaluate($0, in: environment).single }))
 
         case let .arrayFill(value, count, line):
-            let element = try evaluate(value, in: environment)
-            guard case let .integer(integer) = try evaluate(count, in: environment), integer.value >= 0 else {
+            let element = try evaluate(value, in: environment).single
+            guard case let .integer(integer) = try evaluate(count, in: environment).single,
+                  integer.value >= 0 else {
                 throw GooseInterpreterError.runtime(
                     line: line,
                     message: "A contagem da repetição deve ser um inteiro não negativo"
@@ -509,10 +729,14 @@ final class GooseRuntime {
             return try evaluateMatch(scrutinee, arms, line, environment)
 
         case let .block(body, _):
-            return try execute(body, in: GooseEnvironment(parent: environment))
+            do {
+                return try execute(body, in: GooseEnvironment(parent: environment))
+            } catch let GooseControlFlow.breakBlock(value) {
+                return value
+            }
 
         case let .cast(value, typeName, checked, line):
-            return try cast(try evaluate(value, in: environment), to: typeName, checked: checked, line: line)
+            return try cast(try evaluate(value, in: environment).single, to: typeName, checked: checked, line: line)
 
         case let .structLiteral(typeName, arguments, line):
             return try buildStruct(typeName, arguments, line, environment)
@@ -534,11 +758,14 @@ final class GooseRuntime {
             let upper = try integerValue(to, in: environment, line: line)
             let values = lower < upper ? Array(lower..<upper) : []
             return .array(GooseArray(values.map { .integer(.literal($0)) }))
+
+        case let .tuple(expressions, _):
+            return .tuple(try expressions.map { try evaluate($0, in: environment).single })
         }
     }
 
     private func isTrue(_ expression: GooseExpression, in environment: GooseEnvironment) throws -> Bool {
-        let value = try evaluate(expression, in: environment)
+        let value = try evaluate(expression, in: environment).single
         guard case let .bool(flag) = value else {
             throw GooseInterpreterError.runtime(
                 line: expression.line,
@@ -553,7 +780,7 @@ final class GooseRuntime {
         in environment: GooseEnvironment,
         line: Int
     ) throws -> Int64 {
-        guard case let .integer(integer) = try evaluate(expression, in: environment) else {
+        guard case let .integer(integer) = try evaluate(expression, in: environment).single else {
             throw GooseInterpreterError.runtime(line: line, message: "Esperado um inteiro")
         }
         return integer.value
@@ -627,7 +854,7 @@ final class GooseRuntime {
         var positional: [GooseValue] = []
 
         for argument in arguments {
-            let value = try evaluate(argument.value, in: environment)
+            let value = try evaluate(argument.value, in: environment).single
             if let name = argument.name {
                 given[name] = value
             } else {
@@ -647,10 +874,8 @@ final class GooseRuntime {
             let value: GooseValue
             if let named = given.removeValue(forKey: field.name) {
                 value = named
-            } else if position < positional.count, field.defaultValue == nil {
-                value = positional[position]
             } else if let defaultValue = field.defaultValue {
-                value = try evaluate(defaultValue, in: globals)
+                value = try evaluate(defaultValue, in: globals).single
             } else if position < positional.count {
                 value = positional[position]
             } else {
@@ -664,16 +889,17 @@ final class GooseRuntime {
         }
 
         guard given.isEmpty else {
-            let missing = given.keys.sorted().joined(separator: ", ")
+            let extra = given.keys.sorted().joined(separator: ", ")
             throw GooseInterpreterError.runtime(
                 line: line,
-                message: "\(owner) não tem o campo: \(missing)"
+                message: "\(owner) não tem o campo: \(extra)"
             )
         }
         return fields
     }
 
-    /// What a pattern did with the subject.
+    // MARK: Match
+
     private enum MatchOutcome {
         case noMatch
         case matched(binder: (name: String, value: GooseValue)?)
@@ -685,7 +911,7 @@ final class GooseRuntime {
         _ line: Int,
         _ environment: GooseEnvironment
     ) throws -> GooseValue {
-        let subject = try evaluate(scrutinee, in: environment)
+        let subject = try evaluate(scrutinee, in: environment).single
 
         for arm in arms {
             for pattern in arm.patterns {
@@ -714,6 +940,14 @@ final class GooseRuntime {
     ) throws -> MatchOutcome {
         switch pattern {
         case .wildcard:
+            return .matched(binder: nil)
+
+        case let .name(name):
+            guard case let .integer(named)? = environment.lookup(name),
+                  case let .integer(integer) = subject,
+                  named.value == integer.value else {
+                return .noMatch
+            }
             return .matched(binder: nil)
 
         case let .variant(name, binder):
@@ -749,7 +983,7 @@ final class GooseRuntime {
         _ line: Int,
         _ environment: GooseEnvironment
     ) throws -> GooseValue {
-        let container = try evaluate(base, in: environment)
+        let container = try evaluate(base, in: environment).single
         guard case let .array(array) = container else {
             throw GooseInterpreterError.runtime(line: line, message: "Só arrays aceitam slice")
         }
@@ -795,21 +1029,57 @@ final class GooseRuntime {
     ) throws -> GooseValue {
         switch name {
         case "print":
-            let text = try arguments.map { try evaluate($0, in: environment).rendered }
+            let text = try arguments.map { try evaluate($0, in: environment).single.rendered }
             try append(text.joined() + "\n")
             return .null
 
         case "str":
-            let text = try arguments.map { try evaluate($0, in: environment).rendered }
+            let text = try arguments.map { try evaluate($0, in: environment).single.rendered }
             return .string(text.joined())
+
+        case "format":
+            return try format(arguments, in: environment, line: line)
 
         default:
             guard let function = program.functions[name] else {
                 throw GooseInterpreterError.runtime(line: line, message: "Função desconhecida: \(name)")
             }
-            let values = try arguments.map { try evaluate($0, in: environment) }
+            let values = try arguments.map { try evaluate($0, in: environment).single }
             return try call(function, arguments: values, line: line)
         }
+    }
+
+    /// `format(dest, …)` appends the rendered arguments to a `u8[…]` array.
+    private func format(
+        _ arguments: [GooseExpression],
+        in environment: GooseEnvironment,
+        line: Int
+    ) throws -> GooseValue {
+        guard let destination = arguments.first else {
+            throw GooseInterpreterError.runtime(line: line, message: "format espera um destino")
+        }
+
+        let text = try arguments.dropFirst().map {
+            try evaluate($0, in: environment).single.rendered
+        }.joined()
+
+        let target: GooseExpression
+        if case let .variable(name, _) = destination {
+            target = .variable(name, line: line)
+        } else {
+            target = destination
+        }
+
+        guard case var .array(array) = try evaluate(target, in: environment).single else {
+            throw GooseInterpreterError.runtime(
+                line: line,
+                message: "format precisa de um array como destino"
+            )
+        }
+        array.isByteArray = true
+        array.elements.append(contentsOf: text.utf8.map { .integer(.literal(Int64($0))) })
+        try assign(.array(array), to: target, in: environment, line: line)
+        return .null
     }
 
     private func call(_ function: GooseFunction, arguments: [GooseValue], line: Int) throws -> GooseValue {
@@ -836,8 +1106,12 @@ final class GooseRuntime {
 
         do {
             return try execute(function.body, in: scope)
-        } catch let GooseControlFlow.returned(value) {
-            return value
+        } catch let GooseControlFlow.returned(values) {
+            return values.count == 1 ? values[0] : .tuple(values)
+        } catch GooseControlFlow.breakBlock {
+            // `guard c;` in a function body skips the rest of it, and a
+            // function with no result hands back nothing.
+            return .null
         }
     }
 
@@ -848,37 +1122,43 @@ final class GooseRuntime {
         in environment: GooseEnvironment,
         line: Int
     ) throws -> GooseValue {
-        let target = try evaluate(receiver, in: environment)
+        let target = try evaluate(receiver, in: environment).single
 
         switch name {
         case "push":
-            let array = try mutableArray(target, receiver, name: name, environment, line: line)
+            let (array, root) = try mutableArray(target, receiver, name: name, environment, line: line)
             guard let first = arguments.first else {
                 throw GooseInterpreterError.runtime(line: line, message: "push espera um valor")
             }
-            array.elements.append(try evaluate(first, in: environment).copied)
+            var updated = array
+            updated.elements.append(try evaluate(first, in: environment).single.copied)
+            try assign(.array(updated), to: root, in: environment, line: line)
             return .null
 
         case "pop":
-            let array = try mutableArray(target, receiver, name: name, environment, line: line)
-            guard let last = array.elements.popLast() else {
+            let (array, root) = try mutableArray(target, receiver, name: name, environment, line: line)
+            var updated = array
+            guard let last = updated.elements.popLast() else {
                 throw GooseInterpreterError.runtime(line: line, message: "pop em um array vazio")
             }
+            try assign(.array(updated), to: root, in: environment, line: line)
             return last
 
         case "append":
-            let array = try mutableArray(target, receiver, name: name, environment, line: line)
+            let (array, root) = try mutableArray(target, receiver, name: name, environment, line: line)
+            var updated = array
             for argument in arguments {
-                let value = try evaluate(argument, in: environment)
+                let value = try evaluate(argument, in: environment).single
                 switch value {
                 case let .array(other):
-                    array.elements.append(contentsOf: other.elements.map(\.copied))
+                    updated.elements.append(contentsOf: other.elements.map(\.copied))
                 case let .string(text):
-                    array.elements.append(contentsOf: text.utf8.map { .integer(.literal(Int64($0))) })
+                    updated.elements.append(contentsOf: text.utf8.map { .integer(.literal(Int64($0))) })
                 default:
-                    array.elements.append(value)
+                    updated.elements.append(value)
                 }
             }
+            try assign(.array(updated), to: root, in: environment, line: line)
             return .null
 
         default:
@@ -886,13 +1166,14 @@ final class GooseRuntime {
         }
     }
 
+    /// Gives back the array and the expression its changes must be written to.
     private func mutableArray(
         _ target: GooseValue,
         _ receiver: GooseExpression,
         name: String,
         _ environment: GooseEnvironment,
         line: Int
-    ) throws -> GooseArray {
+    ) throws -> (GooseArray, GooseExpression) {
         guard case let .array(array) = target else {
             throw GooseInterpreterError.runtime(line: line, message: "\(name) existe apenas em arrays")
         }
@@ -902,7 +1183,7 @@ final class GooseRuntime {
                 message: "Não é possível alterar um array declarado com let"
             )
         }
-        return array
+        return (array, receiver)
     }
 
     private func readField(
@@ -911,7 +1192,7 @@ final class GooseRuntime {
         in environment: GooseEnvironment,
         line: Int
     ) throws -> GooseValue {
-        let target = try evaluate(receiver, in: environment)
+        let target = try evaluate(receiver, in: environment).single
 
         switch (name, target) {
         case ("len", .array(let array)):
@@ -979,13 +1260,9 @@ final class GooseRuntime {
             return try compositeOperation(op, a, b, line: line)
         case (.null, .null) where op == "==":
             return .bool(true)
-        case (.null, _) where op == "==":
+        case (_, .null) where op == "==", (.null, _) where op == "==":
             return .bool(false)
-        case (_, .null) where op == "==":
-            return .bool(false)
-        case (.null, _) where op == "!=":
-            return .bool(true)
-        case (_, .null) where op == "!=":
+        case (_, .null) where op == "!=", (.null, _) where op == "!=":
             return .bool(true)
         default:
             throw GooseInterpreterError.runtime(
@@ -1014,7 +1291,8 @@ final class GooseRuntime {
             signed = a.bits == bits ? a.isSigned : b.isSigned
         }
 
-        if a.bits == b.bits, a.isSigned != b.isSigned, !a.isLiteral, !b.isLiteral, op != "==", op != "!=" {
+        if a.bits == b.bits, a.isSigned != b.isSigned, !a.isLiteral, !b.isLiteral,
+           op != "==", op != "!=" {
             throw GooseInterpreterError.runtime(
                 line: line,
                 message: "Tipos com sinal e sem sinal do mesmo tamanho não se misturam; converta com 'as'"
@@ -1022,7 +1300,9 @@ final class GooseRuntime {
         }
 
         func result(_ value: Int64) -> GooseValue {
-            .integer(GooseInteger(value: value, bits: bits, isSigned: signed, isLiteral: false).normalized())
+            .integer(
+                GooseInteger(value: value, bits: bits, isSigned: signed, isLiteral: false).normalized()
+            )
         }
 
         switch op {
@@ -1039,8 +1319,7 @@ final class GooseRuntime {
                 throw GooseInterpreterError.runtime(line: line, message: "Resto por zero")
             }
             let remainder = a.value % b.value
-            let modulus = abs(b.value)
-            return result(remainder < 0 ? remainder + modulus : remainder)
+            return result(remainder < 0 ? remainder + abs(b.value) : remainder)
         case "==": return .bool(a.value == b.value)
         case "!=": return .bool(a.value != b.value)
         case "<": return .bool(a.value < b.value)
@@ -1159,11 +1438,14 @@ final class GooseRuntime {
     private func coerce(_ value: GooseValue, to typeName: String?, line: Int) throws -> GooseValue {
         guard let typeName else { return value }
 
-        if typeName.contains("[") {
-            return try coerceToArrayType(value, typeName: typeName, line: line)
+        // An optional is a nullable reference; the value itself is unchanged.
+        let base = typeName.hasSuffix("?") ? String(typeName.dropLast()) : typeName
+
+        if base.contains("[") || base.hasSuffix("..") {
+            return try coerceToArrayType(value, typeName: base, line: line)
         }
-        guard let normalized = Self.integerTypes[typeName] else {
-            switch typeName {
+        guard let normalized = Self.integerTypes[base] else {
+            switch base {
             case "f32", "f64":
                 guard case let .integer(integer) = value else { return value }
                 return .double(Double(integer.value))
@@ -1172,29 +1454,50 @@ final class GooseRuntime {
             }
         }
         guard case let .integer(integer) = value else {
-            throw GooseInterpreterError.runtime(line: line, message: "Esperado \(typeName), não \(value.rendered)")
+            throw GooseInterpreterError.runtime(
+                line: line,
+                message: "Esperado \(base), não \(value.rendered)"
+            )
         }
-        return .integer(try integer.asIntegerType(bits: normalized.bits, signed: normalized.signed, checked: false))
+        return .integer(
+            GooseInteger(
+                value: integer.value,
+                bits: normalized.bits,
+                isSigned: normalized.signed,
+                isLiteral: false
+            ).normalized()
+        )
     }
 
-    private func coerceToArrayType(_ value: GooseValue, typeName: String, line: Int) throws -> GooseValue {
+    private func coerceToArrayType(
+        _ value: GooseValue,
+        typeName: String,
+        line: Int
+    ) throws -> GooseValue {
         let isByteArray = typeName.hasPrefix("u8[") && typeName.filter({ $0 == "[" }).count == 1
 
         switch value {
-        case let .array(array):
+        case var .array(array):
             if isByteArray {
                 array.isByteArray = true
             }
-            return value
+            return .array(array)
         case let .string(text) where isByteArray:
             // A string literal fits a `u8[…]` field or variable.
-            return .array(GooseArray(text.utf8.map { .integer(.literal(Int64($0))) }, isByteArray: true))
+            return .array(
+                GooseArray(text.utf8.map { .integer(.literal(Int64($0))) }, isByteArray: true)
+            )
         default:
             return value
         }
     }
 
-    private func cast(_ value: GooseValue, to typeName: String, checked: Bool, line: Int) throws -> GooseValue {
+    private func cast(
+        _ value: GooseValue,
+        to typeName: String,
+        checked: Bool,
+        line: Int
+    ) throws -> GooseValue {
         if typeName == "f32" || typeName == "f64" {
             guard case let .integer(integer) = value else {
                 throw GooseInterpreterError.runtime(line: line, message: "Conversão inválida para \(typeName)")
@@ -1208,7 +1511,12 @@ final class GooseRuntime {
             throw GooseInterpreterError.runtime(line: line, message: "Conversão inválida para \(typeName)")
         }
         do {
-            return .integer(try integer.asIntegerType(bits: target.bits, signed: target.signed, checked: checked))
+            let narrowed = try integer.asIntegerType(
+                bits: target.bits,
+                signed: target.signed,
+                checked: checked
+            )
+            return .integer(narrowed)
         } catch {
             throw GooseInterpreterError.runtime(
                 line: line,
