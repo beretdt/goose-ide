@@ -171,7 +171,9 @@ enum GooseHighlighter {
 
             if isWordCharacter {
                 if identifier.isEmpty { identifierStart = index }
-                identifier.append(Character(UnicodeScalar(character) ?? " "))
+                if let scalar = UnicodeScalar(character) {
+                    identifier.append(Character(scalar))
+                }
             } else if !identifier.isEmpty {
                 colour(identifier, at: identifierStart)
                 identifier = ""

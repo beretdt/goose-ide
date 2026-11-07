@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct GooseExample: Identifiable {
     let id = UUID()
@@ -81,7 +82,6 @@ struct ContentView: View {
     @State private var output = ""
     @State private var status: Status = .idle
     @State private var isRunning = false
-    @FocusState private var editorFocused: Bool
 
     private enum Status {
         case idle
@@ -143,7 +143,7 @@ struct ContentView: View {
             Spacer()
 
             Button {
-                editorFocused = false
+                dismissKeyboard()
                 runProgram()
             } label: {
                 if isRunning {
@@ -166,7 +166,6 @@ struct ContentView: View {
 
     private var editor: some View {
         GooseCodeEditor(text: $source)
-            .focused($editorFocused)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .accessibilityIdentifier("sourceEditor")
     }
@@ -211,7 +210,7 @@ struct ContentView: View {
             ScrollView {
                 Text(output.isEmpty ? "Toque em Executar para rodar seu programa." : output)
                     .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(output.isEmpty ? .secondary : (status == .failure ? .red : .primary))
+                    .foregroundStyle(outputColor)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
             }
@@ -224,6 +223,20 @@ struct ContentView: View {
         .background(.secondary.opacity(0.08))
     }
 
+    private var outputColor: Color {
+        if output.isEmpty { return .secondary }
+        return status == .failure ? .red : .primary
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+    }
+
     private func runProgram() {
         guard !isRunning else { return }
         let program = source
@@ -232,7 +245,7 @@ struct ContentView: View {
         output = ""
 
         Task {
-            let result: Result<String, Error> = await Task.detached(priority: .userInitiated) {
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
                 do {
                     return .success(try GooseInterpreter().run(program))
                 } catch {
