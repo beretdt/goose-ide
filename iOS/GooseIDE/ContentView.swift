@@ -1,6 +1,5 @@
 import SwiftUI
 import UIKit
-import GooseAI
 
 // MARK: - Samples
 

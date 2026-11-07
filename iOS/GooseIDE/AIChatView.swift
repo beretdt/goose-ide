@@ -1,5 +1,4 @@
 import SwiftUI
-import GooseAI
 
 /// The AI chat, presented as a half sheet so the code stays visible while the
 /// agent edits it.
