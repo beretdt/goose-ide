@@ -12,7 +12,7 @@ não envia código para nenhum servidor.
   AST e runtime.
 - Execução fora da thread principal, com limites de passos, profundidade de
   recursão e tamanho de saída para o app nunca travar.
-- 31 testes unitários e 10 programas de referência. As saídas esperadas vêm do
+- 33 testes unitários e 10 programas de referência. As saídas esperadas vêm do
   compilador Goose oficial (v2026.4), então o interpretador é conferido contra
   a linguagem, não contra si mesmo.
 
@@ -64,6 +64,37 @@ GOOSE_REFERENCE=/caminho/para/goose Tools/check_fidelity.sh
 1. Abra `GooseIDE.xcodeproj` no Xcode em um Mac.
 2. Selecione o scheme `GooseIDE` e um simulador de iPhone.
 3. Execute com `Cmd+R`.
+
+## Instalar no iPhone
+
+O projeto já traz o bundle `com.beretdt.GooseIDE` e gera o `Info.plist`
+automaticamente, então não falta nenhum arquivo de configuração. Falta apenas
+escolher a sua equipe de assinatura:
+
+1. Conecte o iPhone por cabo e confie no computador.
+2. No Xcode, selecione o projeto `GooseIDE` → target `GooseIDE` →
+   **Signing & Capabilities**.
+3. Marque **Automatically manage signing** e escolha o seu Team (um Apple ID
+   comum serve; o app fica válido por 7 dias e precisa ser reinstalado depois).
+4. Se o bundle id já estiver em uso no seu time, troque
+   `PRODUCT_BUNDLE_IDENTIFIER` para algo como `com.seudominio.GooseIDE`.
+5. Em **Window → Devices and Simulators**, escolha o iPhone como destino e
+   rode com `Cmd+R`.
+6. Na primeira execução o iOS bloqueia o app até você liberar em
+   **Ajustes → Geral → VPN e Gerenciamento de Dispositivos**.
+
+O app funciona inteiramente no aparelho: nenhum código sai do telefone, e o
+programa em edição é salvo localmente (o rascunho volta ao reabrir o app).
+
+### O que observar no teste
+
+- O editor mantém o cursor ao realçar; acima de 20 mil caracteres ele fica sem
+  cor para não pesar.
+- Aninhamento acima de 200 níveis, laços infinitos, recursão acima de 200
+  chamadas e saída acima de 500 mil caracteres são recusados com mensagem, em
+  vez de derrubar o app.
+- A execução roda fora da thread principal, com o tempo em ms mostrado no
+  painel de saída.
 
 ## Executar os testes
 

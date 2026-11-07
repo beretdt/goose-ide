@@ -117,12 +117,20 @@ enum GooseHighlighter {
         ),
     ]
 
+    /// Above this many characters the editor stays plain: re-colouring a large
+    /// buffer on every keystroke is what makes a phone feel slow.
+    private static let highlightLimit = 20_000
+
+    private static let compiled: [NSRegularExpression] = rules.compactMap {
+        try? NSRegularExpression(pattern: $0.pattern)
+    }
+
     static func attributed(text: String) -> NSAttributedString {
         let result = NSMutableAttributedString(string: text, attributes: baseAttributes)
-        let full = NSRange(location: 0, length: (text as NSString).length)
+        guard text.count <= highlightLimit else { return result }
 
-        for rule in rules {
-            guard let regex = try? NSRegularExpression(pattern: rule.pattern) else { continue }
+        let full = NSRange(location: 0, length: (text as NSString).length)
+        for (rule, regex) in zip(rules, compiled) {
             for match in regex.matches(in: text, range: full) {
                 result.addAttributes(rule.attributes, range: match.range)
             }
@@ -171,7 +179,7 @@ enum GooseHighlighter {
 
             if isWordCharacter {
                 if identifier.isEmpty { identifierStart = index }
-                if let scalar = UnicodeScalar(character) {
+                if let scalar = UnicodeScalar(character), scalar.isASCII {
                     identifier.append(Character(scalar))
                 }
             } else if !identifier.isEmpty {

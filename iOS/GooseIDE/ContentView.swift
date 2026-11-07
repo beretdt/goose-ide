@@ -138,11 +138,31 @@ struct GooseExample: Identifiable {
     ]
 }
 
+/// Keeps the last program on disk, so closing the app on a phone does not
+/// throw away what was being written.
+private enum GooseDraft {
+    private static let key = "goose.draft.source"
+
+    static func load() -> String? {
+        UserDefaults.standard.string(forKey: key)
+    }
+
+    static func save(_ source: String) {
+        UserDefaults.standard.set(source, forKey: key)
+    }
+
+    static func clear() {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 struct ContentView: View {
-    @State private var source = GooseExample.all[0].source
+    @State private var source = GooseDraft.load() ?? GooseExample.all[0].source
     @State private var output = ""
     @State private var status: Status = .idle
     @State private var isRunning = false
+    @State private var elapsed: Double?
+    @State private var saveTask: Task<Void, Never>?
 
     private enum Status {
         case idle
@@ -189,6 +209,21 @@ struct ContentView: View {
                     } label: {
                         Label("Exemplos", systemImage: "square.stack.3d.up")
                     }
+                }
+
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: source, subject: Text("Programa Goose")) {
+                        Label("Compartilhar", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
+            .onChange(of: source) { _, newValue in
+                // Saved after a pause in typing, not on every keystroke.
+                saveTask?.cancel()
+                saveTask = Task {
+                    try? await Task.sleep(for: .milliseconds(600))
+                    guard !Task.isCancelled else { return }
+                    GooseDraft.save(newValue)
                 }
             }
         }
@@ -245,6 +280,12 @@ struct ContentView: View {
                 Text(status.label)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+
+                if let elapsed, status == .ok {
+                    Text(String(format: "%.0f ms", elapsed * 1000))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
 
                 Spacer()
 
@@ -304,8 +345,10 @@ struct ContentView: View {
         isRunning = true
         status = .idle
         output = ""
+        elapsed = nil
 
         Task {
+            let started = Date()
             let result = await Task.detached(priority: .userInitiated) { () -> Result<String, Error> in
                 do {
                     return .success(try GooseInterpreter().run(program))
@@ -313,11 +356,13 @@ struct ContentView: View {
                     return .failure(error)
                 }
             }.value
+            let duration = Date().timeIntervalSince(started)
 
             switch result {
             case let .success(text):
                 output = text.isEmpty ? "(sem saída)" : text
                 status = .ok
+                elapsed = duration
             case let .failure(error):
                 output = "Erro: \(error.localizedDescription)"
                 status = .failure

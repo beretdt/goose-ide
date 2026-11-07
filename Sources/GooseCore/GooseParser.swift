@@ -4,11 +4,16 @@ import Foundation
 struct GooseParser {
     private static let unsupportedDeclarations: Set<String> = ["import", "const"]
 
+    /// Deeply nested source recurses deeply in the parser, and a phone's
+    /// thread stacks are small, so nesting is capped rather than left to crash.
+    private static let nestingLimit = 200
+
     private let tokens: [GooseToken]
     private let structNames: Set<String>
     private let enumNames: Set<String>
     private var index = 0
     private var loopDepth = 0
+    private var nesting = 0
 
     init(tokens: [GooseToken]) {
         self.tokens = tokens
@@ -324,7 +329,15 @@ struct GooseParser {
     // MARK: - Expressions
 
     private mutating func parseExpression() throws -> GooseExpression {
-        try parseBinary(minimumPrecedence: 1)
+        nesting += 1
+        defer { nesting -= 1 }
+        guard nesting <= Self.nestingLimit else {
+            throw GooseInterpreterError.syntax(
+                line: current.line,
+                message: "Aninhamento profundo demais (limite \(Self.nestingLimit))"
+            )
+        }
+        return try parseBinary(minimumPrecedence: 1)
     }
 
     private mutating func parseBinary(minimumPrecedence: Int) throws -> GooseExpression {
@@ -654,6 +667,15 @@ struct GooseParser {
     // MARK: - Blocks and types
 
     private mutating func parseBlock() throws -> [GooseStatement] {
+        nesting += 1
+        defer { nesting -= 1 }
+        guard nesting <= Self.nestingLimit else {
+            throw GooseInterpreterError.syntax(
+                line: current.line,
+                message: "Aninhamento profundo demais (limite \(Self.nestingLimit))"
+            )
+        }
+
         try consumeSymbol("{")
         var statements: [GooseStatement] = []
         while !isSymbol("}") {

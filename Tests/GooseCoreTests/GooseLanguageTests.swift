@@ -282,4 +282,30 @@ final class GooseLanguageTests: XCTestCase {
             XCTAssertTrue(message.contains("Recursão"), message)
         }
     }
+
+    /// A phone's thread stacks are small, so nesting is refused by the parser
+    /// instead of overflowing the stack and killing the app.
+    func testDeeplyNestedSourceIsRejectedNotFatal() {
+        let nested = String(repeating: "(", count: 400) + "1" + String(repeating: ")", count: 400)
+        let sources = [
+            "fn main() { let x = \(nested); print(x); }",
+            "fn main() {" + String(repeating: "{", count: 400) + String(repeating: "}", count: 400) + "}",
+        ]
+
+        for source in sources {
+            XCTAssertThrowsError(try run(source)) { error in
+                guard case .syntax(_, let message) = error as? GooseInterpreterError else {
+                    return XCTFail("expected a syntax error, got \(error)")
+                }
+                XCTAssertTrue(message.contains("Aninhamento"), message)
+            }
+        }
+    }
+
+    func testVeryLongInputStaysResponsive() {
+        // 5000 statements is far more than a phone editor needs, but it must
+        // finish rather than hang or crash.
+        let source = "fn main() { " + String(repeating: "print(1); ", count: 5000) + "}"
+        XCTAssertEqual(try run(source).count, 10_000)
+    }
 }
