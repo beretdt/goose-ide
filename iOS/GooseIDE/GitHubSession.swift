@@ -3,7 +3,10 @@ import SwiftUI
 
 /// Holds the GitHub session for the whole app: the token, the account it
 /// belongs to, and the file currently open from a repository.
-@MainActor
+///
+/// The class is not actor-isolated on purpose: `@StateObject` builds it in a
+/// non-isolated property initializer, and every mutation here happens from a
+/// SwiftUI task, which already runs on the main actor.
 final class GitHubSession: ObservableObject {
     @Published private(set) var token: String
     @Published private(set) var login: String?
@@ -20,7 +23,7 @@ final class GitHubSession: ObservableObject {
         let sha: String
     }
 
-    nonisolated init(token: String? = GitHubTokenStore.load()) {
+    init(token: String? = GitHubTokenStore.load()) {
         self.token = token ?? ""
     }
 
