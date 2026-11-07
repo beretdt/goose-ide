@@ -82,9 +82,9 @@ jobs:
           fi
 
           MIN_OS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract MinimumOSVersion raw -)"
-          PLATFORMS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleSupportedPlatforms json -)"
-          if ! grep -Fq '"iPhoneOS"' <<< "$PLATFORMS"; then
-            echo "The app bundle does not declare the iPhoneOS platform: $PLATFORMS" >&2
+          PLATFORM="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleSupportedPlatforms.0 raw -)"
+          if [[ "$PLATFORM" != "iPhoneOS" ]]; then
+            echo "The app bundle does not declare the iPhoneOS platform: ${PLATFORM:-missing}" >&2
             exit 1
           fi
 
@@ -103,7 +103,7 @@ jobs:
             exit 1
           fi
 
-          echo "Validated IPA: bundle=$BUNDLE_ID minimum-iOS=$MIN_OS platforms=$PLATFORMS architecture=arm64"
+          echo "Validated IPA: bundle=$BUNDLE_ID minimum-iOS=$MIN_OS platform=$PLATFORM architecture=arm64"
 
       - uses: actions/upload-artifact@v4
         with:
