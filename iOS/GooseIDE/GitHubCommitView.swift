@@ -11,6 +11,7 @@ struct GitHubCommitView: View {
     @State private var message = ""
     @State private var path = ""
     @State private var branch = ""
+
     @State private var isCommitting = false
     @State private var errorMessage: String?
     @State private var result: String?
@@ -100,7 +101,7 @@ struct GitHubCommitView: View {
     }
 
     private func commit() async {
-        guard let openFile else { return }
+        guard let current = openFile else { return }
         isCommitting = true
         errorMessage = nil
         result = nil
@@ -110,18 +111,18 @@ struct GitHubCommitView: View {
             let commit = try await session.client.commit(
                 source,
                 to: path,
-                in: openFile.repository,
+                in: current.repository,
                 branch: branch,
                 message: message,
-                replacing: path == openFile.path ? openFile.sha : nil
+                replacing: path == current.path ? current.sha : nil
             )
             // The blob changed, so the next commit has to quote the new one.
             // The commit response already carries it, so no extra request.
             let updated = GitHubSession.OpenFile(
-                repository: openFile.repository,
+                repository: current.repository,
                 branch: branch,
                 path: path,
-                sha: commit.blobSHA ?? openFile.sha
+                sha: commit.blobSHA ?? current.sha
             )
             openFile = updated
             session.remember(updated)

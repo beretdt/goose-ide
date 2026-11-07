@@ -20,7 +20,7 @@ final class GitHubSession: ObservableObject {
         let sha: String
     }
 
-    init(token: String? = GitHubTokenStore.load()) {
+    nonisolated init(token: String? = GitHubTokenStore.load()) {
         self.token = token ?? ""
     }
 

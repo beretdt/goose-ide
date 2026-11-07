@@ -37,7 +37,7 @@ public protocol HTTPTransport: Sendable {
 
 /// The real transport. `FoundationNetworking` is where `URLSession` lives on
 /// Linux, so the import is conditional.
-public struct URLSessionTransport: HTTPTransport {
+public struct URLSessionTransport: HTTPTransport, @unchecked Sendable {
     private let session: URLSession
 
     public init(session: URLSession = .shared) {
