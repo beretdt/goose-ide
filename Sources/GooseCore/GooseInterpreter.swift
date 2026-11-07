@@ -1,3 +1,5 @@
+import Foundation
+
 public struct GooseInterpreter {
     public init() {}
 
