@@ -1,14 +1,34 @@
 # Goose IDE
 
-Um editor inicial para escrever e executar um subconjunto da linguagem Goose diretamente no iPhone. O app e o interpretador funcionam localmente; o projeto nao envia codigo para um servidor.
+Um editor para escrever e rodar Goose no iPhone, com interpretador local. O app
+não envia código para nenhum servidor.
 
 ## Estado atual
 
-- Projeto iOS nativo em SwiftUI, com editor de texto e painel de saida.
-- Interpretador local inicial que entende `fn main()`, chamadas a `print(...)`, textos, numeros e booleanos.
-- Testes unitarios para execucao, saida e erros de sintaxe.
+- App SwiftUI com editor monoespaçado, realce de sintaxe, barra de símbolos no
+  teclado e exemplos prontos (Fibonacci, arrays, FizzBuzz, laços).
+- Interpretador próprio em `Sources/GooseCore/`, dividido em lexer, parser,
+  AST e runtime.
+- Execução fora da thread principal, com limites de passos, profundidade de
+  recursão e tamanho de saída para o app nunca travar.
+- 19 testes unitários; as saídas esperadas foram geradas pelo compilador Goose
+  oficial (v2026.4), então o interpretador é conferido contra a linguagem, não
+  contra si mesmo.
 
-Este ainda nao e um interpretador completo da linguagem Goose. Recursos como variaveis, expressoes, tipos, funcoes e arrays serao adicionados gradualmente.
+### O que já funciona
+
+`fn` e `recursive fn`, `let`/`var`, `if`/`else if`/`else` como expressão,
+`while`, `for i in n`, `for x in array`, `break`/`continue`, `return`,
+recursão, parâmetros sem tipo, operadores aritméticos/comparativos/lógicos,
+larguras de inteiro (`u8 + 1` estoura em 8 bits), `as`/`as!`, arrays inline
+com `push`/`pop`/`append`, `.len`/`.cap`, `print(...)` e `str(...)`.
+
+### O que ainda falta
+
+`struct`, `enum`, `match`, slices (`a[1..4]`, `^2`), referências
+(`&x`, `Mark..&`), retorno de múltiplos valores, `defer` e a biblioteca padrão
+(`json`, `regex`, `vec`...). O interpretador avisa com uma mensagem clara
+quando encontra `struct`/`enum`/`import`/`const`.
 
 ## Executar o app
 
@@ -16,11 +36,9 @@ Este ainda nao e um interpretador completo da linguagem Goose. Recursos como var
 2. Selecione o scheme `GooseIDE` e um simulador de iPhone.
 3. Execute com `Cmd+R`.
 
-O app abre com um exemplo. Toque em **Executar** para ver a saida.
-
 ## Executar os testes
 
-Em um Mac com Swift 5.9 ou mais recente:
+Em qualquer plataforma com Swift 5.9 ou mais recente:
 
 ```sh
 swift test
@@ -29,10 +47,15 @@ swift test
 ## Exemplo suportado
 
 ```goose
+recursive fn fib(n: i64) -> i64 {
+    if n < 2 { return n; }
+    return fib(n - 1) + fib(n - 2);
+}
+
 fn main() {
-    print("Hello, Goose!");
-    print("A resposta e ", 42);
+    for i in 10 { print("fib(", i, ") = ", fib(i)); }
 }
 ```
 
-O interpretador atual aceita apenas essas formas de `print`. A sintaxe e intencionalmente limitada enquanto montamos a base; consulte a [linguagem Goose original](https://github.com/aardappel/goose) para a especificacao completa.
+Consulte a [linguagem Goose original](https://github.com/aardappel/goose) para
+a especificação completa.

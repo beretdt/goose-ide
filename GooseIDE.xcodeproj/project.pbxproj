@@ -9,12 +9,24 @@
 		A10000000000000000000001 /* GooseIDEApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000001 /* GooseIDEApp.swift */; };
 		A10000000000000000000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000002 /* ContentView.swift */; };
 		A10000000000000000000003 /* GooseInterpreter.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000003 /* GooseInterpreter.swift */; };
+		A10000000000000000000004 /* GooseSyntax.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000005 /* GooseSyntax.swift */; };
+		A10000000000000000000005 /* GooseLexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000006 /* GooseLexer.swift */; };
+		A10000000000000000000006 /* GooseAST.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000007 /* GooseAST.swift */; };
+		A10000000000000000000007 /* GooseParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000008 /* GooseParser.swift */; };
+		A10000000000000000000008 /* GooseRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000009 /* GooseRuntime.swift */; };
+		A10000000000000000000009 /* GooseCodeEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10000000000000000000010 /* GooseCodeEditor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		B10000000000000000000001 /* GooseIDEApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/GooseIDEApp.swift; sourceTree = "<group>"; };
 		B10000000000000000000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/ContentView.swift; sourceTree = "<group>"; };
 		B10000000000000000000003 /* GooseInterpreter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseInterpreter.swift; sourceTree = "<group>"; };
+		B10000000000000000000005 /* GooseSyntax.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseSyntax.swift; sourceTree = "<group>"; };
+		B10000000000000000000006 /* GooseLexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseLexer.swift; sourceTree = "<group>"; };
+		B10000000000000000000007 /* GooseAST.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseAST.swift; sourceTree = "<group>"; };
+		B10000000000000000000008 /* GooseParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseParser.swift; sourceTree = "<group>"; };
+		B10000000000000000000009 /* GooseRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseCore/GooseRuntime.swift; sourceTree = "<group>"; };
+		B10000000000000000000010 /* GooseCodeEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/GooseCodeEditor.swift; sourceTree = "<group>"; };
 		B10000000000000000000004 /* GooseIDE.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GooseIDE.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -34,6 +46,12 @@
 				B10000000000000000000001 /* GooseIDEApp.swift */,
 				B10000000000000000000002 /* ContentView.swift */,
 				B10000000000000000000003 /* GooseInterpreter.swift */,
+				B10000000000000000000005 /* GooseSyntax.swift */,
+				B10000000000000000000006 /* GooseLexer.swift */,
+				B10000000000000000000007 /* GooseAST.swift */,
+				B10000000000000000000008 /* GooseParser.swift */,
+				B10000000000000000000009 /* GooseRuntime.swift */,
+				B10000000000000000000010 /* GooseCodeEditor.swift */,
 				D10000000000000000000002 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -74,6 +92,12 @@
 				A10000000000000000000001 /* GooseIDEApp.swift in Sources */,
 				A10000000000000000000002 /* ContentView.swift in Sources */,
 				A10000000000000000000003 /* GooseInterpreter.swift in Sources */,
+				A10000000000000000000004 /* GooseSyntax.swift in Sources */,
+				A10000000000000000000005 /* GooseLexer.swift in Sources */,
+				A10000000000000000000006 /* GooseAST.swift in Sources */,
+				A10000000000000000000007 /* GooseParser.swift in Sources */,
+				A10000000000000000000008 /* GooseRuntime.swift in Sources */,
+				A10000000000000000000009 /* GooseCodeEditor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

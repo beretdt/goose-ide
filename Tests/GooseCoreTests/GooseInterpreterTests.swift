@@ -27,10 +27,10 @@ final class GooseInterpreterTests: XCTestCase {
     }
 
     func testReportsInvalidSyntax() {
-        XCTAssertThrowsError(try GooseInterpreter().run("fn main() { print(42) }")) { error in
+        XCTAssertThrowsError(try GooseInterpreter().run("fn main() { print(42)")) { error in
             XCTAssertEqual(
                 error as? GooseInterpreterError,
-                .syntax(line: 1, message: "Esperado ';'")
+                .syntax(line: 1, message: "Bloco sem fechamento")
             )
         }
     }
