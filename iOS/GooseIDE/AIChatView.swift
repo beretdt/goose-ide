@@ -21,7 +21,7 @@ struct AIChatView: View {
         }
         .background(VSCode.sidebar)
         .sheet(isPresented: $showingSettings) {
-            AISettingsView(session: chat)
+            AISettingsView(chat: chat)
         }
         .onAppear {
             if !chat.hasKey {
