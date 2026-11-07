@@ -164,6 +164,12 @@ struct ContentView: View {
     @State private var elapsed: Double?
     @State private var saveTask: Task<Void, Never>?
 
+    @StateObject private var github = GitHubSession()
+    @State private var openFile: GitHubSession.OpenFile?
+    @State private var showingBrowser = false
+    @State private var showingCommit = false
+    @State private var showingSettings = false
+
     private enum Status {
         case idle
         case ok
@@ -199,15 +205,47 @@ struct ContentView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
-                        ForEach(GooseExample.all) { example in
-                            Button(example.name) {
-                                source = example.source
-                                output = ""
-                                status = .idle
+                        Section("Exemplos") {
+                            ForEach(GooseExample.all) { example in
+                                Button(example.name) {
+                                    source = example.source
+                                    openFile = nil
+                                    github.forgetOpenFile()
+                                    output = ""
+                                    status = .idle
+                                }
+                            }
+                        }
+
+                        Section("GitHub") {
+                            Button {
+                                if github.isConfigured {
+                                    showingBrowser = true
+                                } else {
+                                    showingSettings = true
+                                }
+                            } label: {
+                                Label("Abrir do GitHub", systemImage: "arrow.down.doc")
+                            }
+
+                            Button {
+                                showingCommit = true
+                            } label: {
+                                Label("Commitar", systemImage: "arrow.up.doc")
+                            }
+                            .disabled(!github.isConfigured)
+
+                            Button {
+                                showingSettings = true
+                            } label: {
+                                Label(
+                                    github.login.map { "Conta: \($0)" } ?? "Conectar ao GitHub",
+                                    systemImage: "person.badge.key"
+                                )
                             }
                         }
                     } label: {
-                        Label("Exemplos", systemImage: "square.stack.3d.up")
+                        Label("Menu", systemImage: "ellipsis.circle")
                     }
                 }
 
@@ -220,6 +258,23 @@ struct ContentView: View {
             // One-parameter form: the two-parameter `onChange` is iOS 17 only.
             .onChange(of: source) { newValue in
                 scheduleSave(newValue)
+            }
+            .sheet(isPresented: $showingSettings) {
+                GitHubSettingsView(session: github)
+            }
+            .sheet(isPresented: $showingBrowser) {
+                GitHubBrowserView(
+                    session: github,
+                    source: $source,
+                    openFile: $openFile
+                )
+            }
+            .sheet(isPresented: $showingCommit) {
+                GitHubCommitView(
+                    session: github,
+                    source: source,
+                    openFile: $openFile
+                )
             }
         }
     }
@@ -236,10 +291,19 @@ struct ContentView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text("EDITOR")
-                .font(.caption.weight(.semibold))
-                .tracking(1.2)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("EDITOR")
+                    .font(.caption.weight(.semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+
+                if let openFile {
+                    Text("\(openFile.repository) · \(openFile.path)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer()
 
