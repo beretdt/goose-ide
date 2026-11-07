@@ -217,15 +217,20 @@ struct ContentView: View {
                     }
                 }
             }
-            .onChange(of: source) { _, newValue in
-                // Saved after a pause in typing, not on every keystroke.
-                saveTask?.cancel()
-                saveTask = Task {
-                    try? await Task.sleep(for: .milliseconds(600))
-                    guard !Task.isCancelled else { return }
-                    GooseDraft.save(newValue)
-                }
+            // One-parameter form: the two-parameter `onChange` is iOS 17 only.
+            .onChange(of: source) { newValue in
+                scheduleSave(newValue)
             }
+        }
+    }
+
+    /// Saves after a pause in typing, not on every keystroke.
+    private func scheduleSave(_ text: String) {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            GooseDraft.save(text)
         }
     }
 
