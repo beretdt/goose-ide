@@ -1,12 +1,15 @@
 name: Unsigned IPA
 
 # Builds an unsigned .ipa on a macOS runner so the app can be sideloaded from
-# a machine that has no Xcode. Signing happens on the device side, with a free
-# Apple ID (AltStore/SideStore/Sideloadly), so no Apple account is needed here.
+# a machine that has no Xcode. No Apple account is needed to build the artifact.
 on:
   workflow_dispatch:
+  pull_request:
   push:
     tags: ["v*"]
+
+permissions:
+  contents: read
 
 jobs:
   ipa:
@@ -38,6 +41,69 @@ jobs:
           cd out
           zip -qry GooseIDE-unsigned.ipa Payload
           shasum -a 256 GooseIDE-unsigned.ipa | tee GooseIDE-unsigned.ipa.sha256
+
+      - name: Validate unsigned IPA
+        shell: bash
+        run: |
+          set -euo pipefail
+          IPA="out/GooseIDE-unsigned.ipa"
+          APP_DIR="Payload/GooseIDE.app"
+
+          unzip -t "$IPA" >/dev/null
+          IPA_ENTRIES="$(unzip -Z1 "$IPA")"
+
+          APP_BUNDLES="$(printf '%s\n' "$IPA_ENTRIES" | awk -F/ '$1 == "Payload" && $2 ~ /\.app$/ { print $2 }' | sort -u)"
+          if [[ "$APP_BUNDLES" != "GooseIDE.app" ]]; then
+            echo "Expected exactly Payload/GooseIDE.app at the IPA root; found: ${APP_BUNDLES:-none}" >&2
+            exit 1
+          fi
+
+          INFO_PLIST="$APP_DIR/Info.plist"
+          if ! grep -Fxq "$INFO_PLIST" <<< "$IPA_ENTRIES"; then
+            echo "Missing $INFO_PLIST in the IPA" >&2
+            exit 1
+          fi
+          unzip -p "$IPA" "$INFO_PLIST" | plutil -lint - >/dev/null
+
+          BUNDLE_ID="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleIdentifier raw -)"
+          EXPECTED_BUNDLE_ID="$(
+            xcodebuild \
+              -project GooseIDE.xcodeproj \
+              -target GooseIDE \
+              -configuration Release \
+              -sdk iphoneos \
+              -showBuildSettings |
+              awk '$1 == "PRODUCT_BUNDLE_IDENTIFIER" && $2 == "=" { print $3 }' |
+              sort -u
+          )"
+          if [[ -z "$EXPECTED_BUNDLE_ID" || "$BUNDLE_ID" != "$EXPECTED_BUNDLE_ID" ]]; then
+            echo "Bundle identifier mismatch: IPA=$BUNDLE_ID project=${EXPECTED_BUNDLE_ID:-missing}" >&2
+            exit 1
+          fi
+
+          MIN_OS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract MinimumOSVersion raw -)"
+          PLATFORMS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleSupportedPlatforms json -)"
+          if ! grep -Fq '"iPhoneOS"' <<< "$PLATFORMS"; then
+            echo "The app bundle does not declare the iPhoneOS platform: $PLATFORMS" >&2
+            exit 1
+          fi
+
+          EXECUTABLE="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleExecutable raw -)"
+          EXECUTABLE_PATH="$APP_DIR/$EXECUTABLE"
+          if [[ -z "$EXECUTABLE" || "$EXECUTABLE" == */* ]] || ! grep -Fxq "$EXECUTABLE_PATH" <<< "$IPA_ENTRIES"; then
+            echo "Missing or invalid app executable: $EXECUTABLE_PATH" >&2
+            exit 1
+          fi
+
+          EXECUTABLE_FILE="$(mktemp "$RUNNER_TEMP/GooseIDE-executable.XXXXXX")"
+          trap 'rm -f "$EXECUTABLE_FILE"' EXIT
+          unzip -p "$IPA" "$EXECUTABLE_PATH" > "$EXECUTABLE_FILE"
+          if ! lipo -verify_arch arm64 "$EXECUTABLE_FILE" >/dev/null 2>&1; then
+            echo "The app executable is not a Mach-O binary containing arm64" >&2
+            exit 1
+          fi
+
+          echo "Validated IPA: bundle=$BUNDLE_ID minimum-iOS=$MIN_OS platforms=$PLATFORMS architecture=arm64"
 
       - uses: actions/upload-artifact@v4
         with:

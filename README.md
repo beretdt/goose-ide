@@ -107,6 +107,8 @@ O cliente GitHub tem testes próprios que não tocam na rede: o transporte HTTP
 2. Selecione o scheme `GooseIDE` e um simulador de iPhone.
 3. Execute com `Cmd+R`.
 
+O target declara iOS 16 como versão mínima.
+
 ## Instalar no iPhone
 
 ### Com um Mac
@@ -129,12 +131,12 @@ escolher a sua equipe de assinatura:
 
 ### Sem um Mac
 
-Um app iOS precisa de assinatura para rodar em aparelho, e isso o Xcode faz por
-você. Sem Mac, o trabalho se divide: o CI compila, o seu computador assina e
-instala.
+O projeto tem um target iOS com versão mínima 16. O workflow `Unsigned IPA`
+compila o app sem assinar em um runner macOS e publica o `.ipa`; não é
+necessário ter um Mac ou uma conta Apple para gerar o artefato.
 
-**1. O CI produz um `.ipa` não assinado.** O workflow `Unsigned IPA` roda num
-runner macOS do GitHub e publica o artefato — não precisa de conta Apple:
+**1. Baixe o artefato.** O workflow roda manualmente, em pull requests e em
+tags `v*`. Dispare-o pela aba **Actions** ou use:
 
 ```sh
 gh workflow run build-ipa.yml
@@ -142,36 +144,39 @@ gh run watch
 gh run download --name GooseIDE-unsigned-ipa
 ```
 
-Ou baixe pela aba **Actions** do repositório. O `.ipa` sai com hash SHA-256 ao
-lado, para conferir o arquivo antes de instalar.
+O artefato `GooseIDE-unsigned-ipa` contém `GooseIDE-unsigned.ipa` e o hash
+SHA-256. O workflow também verifica a estrutura `Payload/GooseIDE.app`, o
+`Info.plist`, o bundle ID, a plataforma iPhoneOS e a arquitetura arm64. Essas
+verificações detectam erros de empacotamento, mas não substituem o teste de
+instalação em um iPhone.
 
-**2. Assine e instale com o seu Apple ID.** O aparelho precisa de iOS 17 ou
-mais novo (arm64). Há duas opções:
+**2. Instale e renove pelo SideStore.** Siga a
+[documentação oficial do SideStore](https://docs.sidestore.io/) para fazer a
+configuração inicial, incluindo instalar o SideStore e parear o aparelho.
+Depois, importe o `.ipa` no SideStore e use a ação de atualização antes de a
+assinatura expirar. Com uma conta Apple gratuita, apps assinados por sideload
+expiram em 7 dias e há um limite de 3 apps ativos; confira que a atualização
+terminou com sucesso.
 
-*A — AltServer-Linux, tudo pelo Kali.*
+Após a configuração inicial, o SideStore pode renovar sem o AltServer rodando
+no computador. A renovação pode ser tentada por dados móveis, desde que o
+SideStore, o StosVPN e a rede consigam alcançar os serviços necessários.
+Captive portals, filtros de DNS/VPN ou outras restrições podem impedir a
+renovação; faça-a antes do vencimento e prefira uma conexão confiável.
 
-```sh
-sudo apt install usbmuxd libimobiledevice-utils
-```
+O AltStore é uma alternativa, mas depende do AltServer ligado e alcançável
+pela rede local durante a renovação. Um túnel Tailscale até um AltServer
+remoto não garante a descoberta local que esse fluxo espera. O Sideloadly
+também pode assinar o IPA em um PC Windows, mas a assinatura gratuita continua
+expirando em 7 dias.
 
-Baixe o `AltServer` de `NyaMisty/AltServer-Linux`, conecte o iPhone por cabo e
-confie no computador, e rode o AltServer. Ele instala o **AltStore** no
-aparelho usando o seu Apple ID. Depois mande o `GooseIDE-unsigned.ipa` para o
-iPhone (AirDrop não existe no Linux; use o app Arquivos via nuvem, ou
-`ifuse`, ou um link de download) e abra pelo AltStore.
-
-*B — SideStore, sem depender de um processo rodando no PC.*
-O AltServer instala o SideStore uma vez; depois ele se renova sozinho pelo
-Wi-Fi usando um arquivo de emparelhamento gerado com `pymobiledevice3`.
-
-Em ambos os casos, com Apple ID grátis valem as regras da Apple: **7 dias de
-validade**, no máximo 3 apps assinados por conta, e o certificado precisa ser
-renovado — o AltStore/SideStore faz isso automaticamente enquanto o aparelho
-enxergar o computador na mesma rede.
-
-*C — Alugar um Mac na nuvem.* MacinCloud e similares cobram por hora e já vêm
-com Xcode; é o caminho mais próximo do "normal", e dispensa todo o processo de
-sideloading.
+O projeto atualmente tem um único target de app iOS e não declara arquivos
+`.entitlements` nem extensões. Ao adicionar capabilities ou extensões, confira
+os requisitos de assinatura de cada entitlement e bundle: a conta gratuita
+não oferece todas as capabilities. A presença de uma string
+`com.apple.developer.*`, por si só, não determina se a assinatura gratuita é
+compatível. O workflow também força `CODE_SIGNING_ENTITLEMENTS=""`; revise
+essa configuração e teste o processo de assinatura ao introduzir capabilities.
 
 Sem usar os recursos de rede, a execução e o rascunho ficam no aparelho. O
 recurso GitHub acessa a API do GitHub; ao enviar uma mensagem ao agente de IA,
