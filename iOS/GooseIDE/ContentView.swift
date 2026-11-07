@@ -62,6 +62,67 @@ struct GooseExample: Identifiable {
             """
         ),
         GooseExample(
+            name: "Structs",
+            source: """
+            struct Point { x: f64, y: f64 }
+            struct Player { name: u8[..16], pos: Point, hp: i32 = 100, alive: bool = true }
+
+            fn main() {
+                var p = Player { name: "gus", pos: Point { 1.0, 2.0 } };
+                print(p);
+                p.hp -= 30;
+                p.pos = p.pos + Point { 0.5, 0.5 };
+                print(p);
+                print(p.name, " at ", p.pos.x, ",", p.pos.y, " hp ", p.hp);
+            }
+            """
+        ),
+        GooseExample(
+            name: "Enums e match",
+            source: """
+            enum Shape { Circle { r: f64 }, Rect { w: f64, h: f64 }, Dot }
+
+            fn area(s: Shape) -> f64 {
+                match s {
+                    Circle c => 3.14159 * c.r * c.r,
+                    Rect r => r.w * r.h,
+                    Dot => 0.0,
+                }
+            }
+
+            fn main() {
+                var shapes: Shape[>..] = [];
+                shapes.push(Shape.Circle { r: 1.0 });
+                shapes.push(Shape.Rect { w: 2.0, h: 3.0 });
+                shapes.push(Shape.Dot);
+                for s in shapes { print(s, " area ", area(s)); }
+
+                let level = match 42 { 0 => "zero", 1..50 => "baixo", _ => "alto" };
+                print("nível: ", level);
+            }
+            """
+        ),
+        GooseExample(
+            name: "Slices",
+            source: """
+            fn total(xs: i64[:]) -> i64 {
+                var t = 0;
+                for x in xs { t += x; }
+                return t;
+            }
+
+            fn main() {
+                var grow: i64[>..] = [];
+                for i in 5 { grow.push(i); }
+                print("tudo: ", grow, " soma ", total(grow));
+                print("1..4: ", grow[1..4], " soma ", total(grow[1..4]));
+                print("últimos 2: ", grow[^2..]);
+
+                for i in 10..13 { print("faixa ", i); }
+            }
+            """
+        ),
+        GooseExample(
             name: "Contagem regressiva",
             source: """
             fn main() {

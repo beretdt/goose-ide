@@ -252,10 +252,10 @@ final class GooseLanguageTests: XCTestCase {
     }
 
     func testUnsupportedDeclarationsAreExplained() {
-        XCTAssertThrowsError(try run("struct Point { x: i64 }")) { error in
+        XCTAssertThrowsError(try run("import foo")) { error in
             XCTAssertEqual(
                 error as? GooseInterpreterError,
-                .syntax(line: 1, message: "'struct' ainda não é suportado neste app")
+                .syntax(line: 1, message: "'import' ainda não é suportado neste app")
             )
         }
     }

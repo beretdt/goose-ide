@@ -8,10 +8,12 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(name: "GooseCore", targets: ["GooseCore"])
+        .library(name: "GooseCore", targets: ["GooseCore"]),
+        .executable(name: "goosectl", targets: ["goosectl"]),
     ],
     targets: [
         .target(name: "GooseCore"),
-        .testTarget(name: "GooseCoreTests", dependencies: ["GooseCore"])
+        .executableTarget(name: "goosectl", dependencies: ["GooseCore"]),
+        .testTarget(name: "GooseCoreTests", dependencies: ["GooseCore"]),
     ]
 )

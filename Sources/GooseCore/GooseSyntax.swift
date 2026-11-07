@@ -19,7 +19,7 @@ struct GooseToken: Equatable {
 enum GooseKeyword {
     static let all: Set<String> = [
         "fn", "recursive", "let", "var", "if", "else", "while", "for", "in", "return",
-        "true", "false", "break", "continue", "as", "null",
+        "true", "false", "break", "continue", "as", "null", "match",
         "struct", "enum", "import", "const",
     ]
 }
@@ -30,6 +30,6 @@ enum GooseSymbol {
         "->", "=>", "==", "!=", "<=", ">=", "&&", "||",
         "+=", "-=", "*=", "/=", "%=", "++", "--", "..",
         "{", "}", "(", ")", "[", "]", ",", ";", ".", ":", "+", "-",
-        "*", "/", "%", "=", "<", ">", "!", "&", "|",
+        "*", "/", "%", "=", "<", ">", "!", "&", "|", "^", "_",
     ]
 }

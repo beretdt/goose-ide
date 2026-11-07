@@ -85,7 +85,7 @@ enum GooseHighlighter {
 
     private static let keywords: Set<String> = [
         "fn", "recursive", "let", "var", "if", "else", "while", "for", "in",
-        "return", "break", "continue", "as", "true", "false", "null",
+        "return", "break", "continue", "as", "true", "false", "null", "match",
         "struct", "enum", "import", "const",
     ]
 

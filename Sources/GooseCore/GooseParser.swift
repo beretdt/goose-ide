@@ -2,36 +2,130 @@ import Foundation
 
 /// Recursive-descent parser for the supported Goose subset.
 struct GooseParser {
-    private static let unsupportedDeclarations: Set<String> = ["struct", "enum", "import", "const"]
+    private static let unsupportedDeclarations: Set<String> = ["import", "const"]
 
     private let tokens: [GooseToken]
+    private let structNames: Set<String>
+    private let enumNames: Set<String>
     private var index = 0
     private var loopDepth = 0
 
     init(tokens: [GooseToken]) {
         self.tokens = tokens
+        let declared = Self.declaredTypes(in: tokens)
+        structNames = declared.structs
+        enumNames = declared.enums
+    }
+
+    /// A first pass over the tokens, so a literal may name a type declared
+    /// further down the file.
+    private static func declaredTypes(in tokens: [GooseToken]) -> (structs: Set<String>, enums: Set<String>) {
+        var structs: Set<String> = []
+        var enums: Set<String> = []
+
+        for (position, token) in tokens.enumerated() {
+            guard case let .keyword(word) = token.kind, word == "struct" || word == "enum" else {
+                continue
+            }
+            let next = position + 1
+            guard next < tokens.count, case let .identifier(name) = tokens[next].kind else {
+                continue
+            }
+            if word == "struct" { structs.insert(name) } else { enums.insert(name) }
+        }
+
+        return (structs, enums)
     }
 
     mutating func parseProgram() throws -> GooseProgram {
         var functions: [String: GooseFunction] = [:]
+        var structs: [String: GooseStructDecl] = [:]
+        var enums: [String: GooseEnumDecl] = [:]
         var statements: [GooseStatement] = []
 
         while !isAtEnd {
-            if let keyword = currentKeyword, Self.unsupportedDeclarations.contains(keyword) {
-                throw syntaxError("'\(keyword)' ainda não é suportado neste app")
-            }
-            if currentKeyword == "fn" || currentKeyword == "recursive" {
+            switch currentKeyword {
+            case "struct":
+                let declaration = try parseStructDeclaration()
+                structs[declaration.name] = declaration
+            case "enum":
+                let declaration = try parseEnumDeclaration()
+                enums[declaration.name] = declaration
+            case "fn", "recursive":
                 let function = try parseFunction()
                 functions[function.name] = function
-            } else {
+            case let keyword? where Self.unsupportedDeclarations.contains(keyword):
+                throw syntaxError("'\(keyword)' ainda não é suportado neste app")
+            default:
                 statements.append(try parseStatement())
             }
         }
 
-        return GooseProgram(functions: functions, statements: statements)
+        return GooseProgram(functions: functions, structs: structs, enums: enums, statements: statements)
     }
 
     // MARK: - Declarations
+
+    private mutating func parseStructDeclaration() throws -> GooseStructDecl {
+        let line = current.line
+        try consumeKeyword("struct")
+        let name = try consumeName()
+        let fields = try parseFieldList()
+        return GooseStructDecl(name: name, fields: fields, line: line)
+    }
+
+    private mutating func parseEnumDeclaration() throws -> GooseEnumDecl {
+        let line = current.line
+        try consumeKeyword("enum")
+        let name = try consumeName()
+        try consumeSymbol("{")
+
+        var variants: [GooseVariantDecl] = []
+        while !isSymbol("}") {
+            let variantName = try consumeName()
+            var fields: [GooseFieldDecl] = []
+            if isSymbol("{") {
+                fields = try parseFieldList()
+            } else if consumeSymbolIf("(") {
+                // The tuple form writes the payload types only.
+                var position = 0
+                while !isSymbol(")") {
+                    _ = try parseTypeName()
+                    fields.append(GooseFieldDecl(name: "\(position)", typeName: nil, defaultValue: nil))
+                    position += 1
+                    _ = consumeSymbolIf(",")
+                }
+                try consumeSymbol(")")
+            }
+            variants.append(GooseVariantDecl(name: variantName, fields: fields))
+            _ = consumeSymbolIf(",")
+        }
+
+        try consumeSymbol("}")
+        return GooseEnumDecl(name: name, variants: variants, line: line)
+    }
+
+    private mutating func parseFieldList() throws -> [GooseFieldDecl] {
+        try consumeSymbol("{")
+        var fields: [GooseFieldDecl] = []
+
+        while !isSymbol("}") {
+            let name = try consumeName()
+            var typeName: String?
+            if isSymbol(":") {
+                typeName = try parseTypeName()
+            }
+            var defaultValue: GooseExpression?
+            if consumeSymbolIf("=") {
+                defaultValue = try parseExpression()
+            }
+            fields.append(GooseFieldDecl(name: name, typeName: typeName, defaultValue: defaultValue))
+            _ = consumeSymbolIf(",")
+        }
+
+        try consumeSymbol("}")
+        return fields
+    }
 
     private mutating func parseFunction() throws -> GooseFunction {
         let line = current.line
@@ -99,8 +193,8 @@ struct GooseParser {
             advance()
             try consumeSymbol(";")
             return .continueLoop(line: line)
-        case "fn", "recursive":
-            throw syntaxError("Funções só podem ser declaradas no nível superior")
+        case "fn", "recursive", "struct", "enum":
+            throw syntaxError("Declarações de tipo e função ficam no nível superior")
         default:
             return try parseExpressionStatement()
         }
@@ -139,7 +233,13 @@ struct GooseParser {
         try consumeKeyword("for")
         let name = try consumeName()
         try consumeKeyword("in")
-        let iterable = try parseExpression()
+
+        var iterable = try parseExpression()
+        if consumeSymbolIf("..") {
+            // `for i in a..b` stops before `b`, like an exclusive range.
+            let upper = try parseExpression()
+            iterable = .range(iterable, upper, line: line)
+        }
 
         loopDepth += 1
         let body = try parseBlock()
@@ -189,9 +289,9 @@ struct GooseParser {
             return .assign(target: expression, op: op, value: one, line: expression.line)
         }
 
-        // A block or an `if` chain stands on its own, and the trailing
-        // expression of a block needs no semicolon; every other expression
-        // statement ends with one, as in Goose.
+        // A block, an `if` chain or a `match` stands on its own, and the
+        // trailing expression of a block needs no semicolon; every other
+        // expression statement ends with one, as in Goose.
         if needsTerminator(expression), !isSymbol("}"), !isAtEnd {
             try consumeSymbol(";")
         }
@@ -209,7 +309,7 @@ struct GooseParser {
 
     private func needsTerminator(_ expression: GooseExpression) -> Bool {
         switch expression {
-        case .conditional, .block:
+        case .conditional, .block, .match:
             return false
         default:
             return true
@@ -259,6 +359,12 @@ struct GooseParser {
             advance()
             return .unary(symbol, try parseUnary(), line: line)
         }
+        if isSymbol("^") {
+            // `^k` counts from the end; only a slice uses the value.
+            let line = current.line
+            advance()
+            return .fromEnd(try parseUnary(), line: line)
+        }
         return try parsePostfix()
     }
 
@@ -266,12 +372,18 @@ struct GooseParser {
         var expression = try parsePrimary()
 
         while true {
-            if consumeSymbolIf("[") {
-                let indexExpression = try parseExpression()
-                try consumeSymbol("]")
-                expression = .index(expression, indexExpression, line: expression.line)
+            if isSymbol("[") {
+                expression = try parseBracket(expression)
             } else if consumeSymbolIf(".") {
                 let name = try consumeName()
+
+                if let enumName = enumName(of: expression) {
+                    // `Enum.Variant` is a value; a payload may follow.
+                    let arguments = isSymbol("{") ? try parseLiteralArguments() : []
+                    expression = .variantLiteral(enumName, name, arguments, line: expression.line)
+                    continue
+                }
+
                 if consumeSymbolIf("(") {
                     expression = .method(expression, name, try parseArguments(), line: expression.line)
                 } else {
@@ -288,6 +400,36 @@ struct GooseParser {
         }
 
         return expression
+    }
+
+    /// Returns the enum name when `expression` is a bare enum type name.
+    private func enumName(of expression: GooseExpression) -> String? {
+        if case let .variable(name, _) = expression, enumNames.contains(name) {
+            return name
+        }
+        return nil
+    }
+
+    /// Parses `[index]`, `[a..b]`, `[..b]`, `[a..]` and `[..]`.
+    private mutating func parseBracket(_ base: GooseExpression) throws -> GooseExpression {
+        let line = base.line
+        advance()
+
+        if consumeSymbolIf("..") {
+            let upper = isSymbol("]") ? nil : try parseExpression()
+            try consumeSymbol("]")
+            return .slice(base, nil, upper, line: line)
+        }
+
+        let first = try parseExpression()
+        if consumeSymbolIf("..") {
+            let upper = isSymbol("]") ? nil : try parseExpression()
+            try consumeSymbol("]")
+            return .slice(base, first, upper, line: line)
+        }
+
+        try consumeSymbol("]")
+        return .index(base, first, line: line)
     }
 
     private mutating func parseArguments() throws -> [GooseExpression] {
@@ -330,6 +472,8 @@ struct GooseParser {
                 return .null(line: token.line)
             case "if":
                 return try parseConditional()
+            case "match":
+                return try parseMatch()
             default:
                 throw GooseInterpreterError.syntax(
                     line: token.line,
@@ -339,8 +483,13 @@ struct GooseParser {
 
         case let .identifier(name):
             advance()
-            if consumeSymbolIf("(") {
+            if isSymbol("(") {
+                advance()
                 return .call(name, try parseArguments(), line: token.line)
+            }
+            if isSymbol("{"), structNames.contains(name) {
+                let arguments = try parseLiteralArguments()
+                return .structLiteral(name, arguments, line: token.line)
             }
             return .variable(name, line: token.line)
 
@@ -390,6 +539,27 @@ struct GooseParser {
         return .arrayLiteral(elements, line: line)
     }
 
+    /// Parses `{ 1, 2 }` or `{ x: 1, y: 2 }` after a type or variant name.
+    /// A positional argument keeps a nil name; the declaration supplies it.
+    private mutating func parseLiteralArguments() throws -> [GooseNamedArgument] {
+        try consumeSymbol("{")
+        var arguments: [GooseNamedArgument] = []
+
+        while !isSymbol("}") {
+            if case let .identifier(name) = current.kind, peekSymbol(ahead: 1, is: ":") {
+                advance()
+                advance()
+                arguments.append(GooseNamedArgument(name: name, value: try parseExpression()))
+            } else {
+                arguments.append(GooseNamedArgument(name: nil, value: try parseExpression()))
+            }
+            _ = consumeSymbolIf(",")
+        }
+
+        try consumeSymbol("}")
+        return arguments
+    }
+
     private mutating func parseConditional() throws -> GooseExpression {
         let line = current.line
         try consumeKeyword("if")
@@ -408,6 +578,79 @@ struct GooseParser {
         return .conditional(condition, thenBody, elseBody, line: line)
     }
 
+    private mutating func parseMatch() throws -> GooseExpression {
+        let line = current.line
+        try consumeKeyword("match")
+        let scrutinee = try parseExpression()
+        try consumeSymbol("{")
+
+        var arms: [GooseMatchArm] = []
+        while !isSymbol("}") {
+            arms.append(try parseMatchArm())
+            _ = consumeSymbolIf(",")
+        }
+
+        try consumeSymbol("}")
+        guard !arms.isEmpty else {
+            throw GooseInterpreterError.syntax(line: line, message: "match sem nenhum braço")
+        }
+        return .match(scrutinee, arms, line: line)
+    }
+
+    private mutating func parseMatchArm() throws -> GooseMatchArm {
+        // Patterns run until `=>`, so every comma seen here separates patterns.
+        var patterns: [GoosePattern] = [try parsePattern()]
+        while consumeSymbolIf(",") {
+            patterns.append(try parsePattern())
+        }
+
+        try consumeSymbol("=>")
+        let body = isSymbol("{") ? try parseBlock() : [.expression(try parseExpression())]
+        return GooseMatchArm(patterns: patterns, body: body)
+    }
+
+    private mutating func parsePattern() throws -> GoosePattern {
+        if case let .identifier(name) = current.kind {
+            if name == "_" {
+                advance()
+                return .wildcard
+            }
+            advance()
+            // `Rect r` binds the payload to `r`.
+            if case let .identifier(binder) = current.kind {
+                advance()
+                return .variant(name, binder: binder)
+            }
+            return .variant(name, binder: nil)
+        }
+
+        if case let .integer(text) = current.kind {
+            guard let lower = Int64(text) else {
+                throw syntaxError("Número inválido no padrão: \(text)")
+            }
+            advance()
+            if consumeSymbolIf("..") {
+                guard case let .integer(upperText) = current.kind, let upper = Int64(upperText) else {
+                    throw syntaxError("Esperado um inteiro após '..'")
+                }
+                advance()
+                return .range(lower, upper)
+            }
+            return .integer(lower)
+        }
+
+        if case .symbol("-") = current.kind {
+            advance()
+            guard case let .integer(text) = current.kind, let value = Int64(text) else {
+                throw syntaxError("Esperado um inteiro negativo no padrão")
+            }
+            advance()
+            return .integer(-value)
+        }
+
+        throw syntaxError("Padrão esperado no match")
+    }
+
     // MARK: - Blocks and types
 
     private mutating func parseBlock() throws -> [GooseStatement] {
@@ -423,7 +666,7 @@ struct GooseParser {
         return statements
     }
 
-    /// Reads a type annotation such as `u8`, `f64` or `i64[>..]`.
+    /// Reads a type annotation such as `u8`, `f64`, `i64[>..]` or `Shape`.
     private mutating func parseTypeName() throws -> String {
         if isSymbol(":") {
             advance()
@@ -432,7 +675,9 @@ struct GooseParser {
         var depth = 0
 
         while !isAtEnd {
-            if depth == 0, isSymbol("=") || isSymbol(";") || isSymbol(",") || isSymbol(")") || isSymbol("{") {
+            if depth == 0,
+               isSymbol("=") || isSymbol(";") || isSymbol(",") || isSymbol(")")
+                || isSymbol("{") || isSymbol("}") {
                 break
             }
             switch current.kind {
@@ -462,7 +707,7 @@ struct GooseParser {
         try consumeSymbol(":")
         var depth = 0
         while !isAtEnd {
-            if depth == 0, isSymbol(",") || isSymbol(")") || isSymbol("{") {
+            if depth == 0, isSymbol(",") || isSymbol(")") || isSymbol("{") || isSymbol("}") {
                 break
             }
             if isSymbol("[") { depth += 1 }
@@ -494,6 +739,12 @@ struct GooseParser {
 
     private func isSymbol(_ symbol: String) -> Bool {
         current.kind == .symbol(symbol)
+    }
+
+    private func peekSymbol(ahead offset: Int, is symbol: String) -> Bool {
+        let position = index + offset
+        guard position < tokens.count else { return false }
+        return tokens[position].kind == .symbol(symbol)
     }
 
     private mutating func advance() {
