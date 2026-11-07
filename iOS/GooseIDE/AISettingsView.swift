@@ -1,5 +1,4 @@
 import SwiftUI
-import GooseAI
 
 /// Provider, key, model, prompt and sampling, tuned to be usable with thumbs.
 struct AISettingsView: View {

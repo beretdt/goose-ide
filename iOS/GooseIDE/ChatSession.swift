@@ -1,5 +1,4 @@
 import Foundation
-import GooseAI
 
 /// The chat with the code agent: the messages, the streaming call, and the
 /// code the agent is writing right now.

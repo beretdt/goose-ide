@@ -1,7 +1,8 @@
 # Goose IDE
 
-Um editor para escrever e rodar Goose no iPhone, com interpretador local. O app
-não envia código para nenhum servidor.
+Um editor para escrever e rodar Goose no iPhone, com interpretador local. A
+execução do programa é local. Se você usar o agente de IA, o prompt, o histórico
+da conversa e o programa atual são enviados ao provedor configurado.
 
 ## Estado atual
 
@@ -16,7 +17,7 @@ e é conferido contra o compilador oficial em cada construção.
 - GitHub: abrir um `.goose` de um repositório e commitar pelo iPhone.
 - Agente de IA opcional (OpenRouter, GitHub Models ou endpoint compatível) que
   escreve no editor ao vivo.
-- **67 testes** (46 do interpretador, 15 do cliente GitHub, 21 do cliente de IA)
+- **82 testes** (46 do interpretador, 15 do cliente GitHub, 21 do cliente de IA)
   e **14 programas de referência**. As saídas esperadas vêm do compilador Goose
   oficial (v2026.4), então o interpretador é comparado com a linguagem, não
   consigo mesmo.
@@ -82,14 +83,6 @@ Detalhes que valem saber:
 
 O cabeçalho do editor mostra `repositório · caminho` enquanto um arquivo do
 GitHub está aberto; escolher um exemplo limpa esse vínculo.
-
-### O que ainda falta
-
-`import` e a biblioteca padrão (`std`, `vec`, `json`, `regex`…), optionais
-(`T?`, `null` já existe mas `?` não), referências (`&x`), `T&`, `defer`,
-`guard`, `block`, `loop`, retorno de múltiplos valores e `enum` em modo
-variável (`Shape..`). O interpretador avisa com mensagem clara quando encontra
-`import` ou `const`.
 
 ## Conferir contra o compilador oficial
 
@@ -180,8 +173,9 @@ enxergar o computador na mesma rede.
 com Xcode; é o caminho mais próximo do "normal", e dispensa todo o processo de
 sideloading.
 
-O app funciona inteiramente no aparelho: nenhum código sai do telefone, e o
-programa em edição é salvo localmente (o rascunho volta ao reabrir o app).
+Sem usar os recursos de rede, a execução e o rascunho ficam no aparelho. O
+recurso GitHub acessa a API do GitHub; ao enviar uma mensagem ao agente de IA,
+o programa atual e a conversa são enviados ao provedor selecionado.
 
 ### O que observar no teste
 
