@@ -10,13 +10,16 @@ let package = Package(
     products: [
         .library(name: "GooseCore", targets: ["GooseCore"]),
         .library(name: "GooseGitHub", targets: ["GooseGitHub"]),
+        .library(name: "GooseAI", targets: ["GooseAI"]),
         .executable(name: "goosectl", targets: ["goosectl"]),
     ],
     targets: [
         .target(name: "GooseCore"),
         .target(name: "GooseGitHub"),
+        .target(name: "GooseAI"),
         .executableTarget(name: "goosectl", dependencies: ["GooseCore"]),
         .testTarget(name: "GooseCoreTests", dependencies: ["GooseCore"]),
         .testTarget(name: "GooseGitHubTests", dependencies: ["GooseGitHub"]),
+        .testTarget(name: "GooseAITests", dependencies: ["GooseAI"]),
     ]
 )

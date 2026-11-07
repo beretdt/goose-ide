@@ -1,39 +1,25 @@
 import SwiftUI
 import UIKit
 
-/// A monospaced editor with Goose syntax highlighting and a symbol bar
-/// above the keyboard.
+/// A VS Code-style editor: Dark+ colours, a line-number gutter, and a symbol
+/// bar above the keyboard.
 struct GooseCodeEditor: UIViewRepresentable {
     @Binding var text: String
-    var isEditable: Bool = true
+    var isEditable = true
 
-    func makeUIView(context: Context) -> UITextView {
-        let textView = UITextView()
-        textView.delegate = context.coordinator
-        textView.backgroundColor = .clear
-        textView.alwaysBounceVertical = true
-        textView.autocorrectionType = .no
-        textView.autocapitalizationType = .none
-        textView.smartDashesType = .no
-        textView.smartQuotesType = .no
-        textView.smartInsertDeleteType = .no
-        textView.spellCheckingType = .no
-        textView.keyboardDismissMode = .interactive
-        textView.textContainerInset = UIEdgeInsets(top: 12, left: 8, bottom: 12, right: 8)
-        textView.inputAccessoryView = context.coordinator.makeSymbolBar(for: textView)
-        textView.attributedText = GooseHighlighter.attributed(text: text)
-        textView.typingAttributes = GooseHighlighter.baseAttributes
-        return textView
+    func makeUIView(context: Context) -> EditorContainerView {
+        let container = EditorContainerView()
+        container.textView.delegate = context.coordinator
+        container.onTextChange = { newText in
+            context.coordinator.text.wrappedValue = newText
+        }
+        container.applyModelText(text)
+        return container
     }
 
-    func updateUIView(_ textView: UITextView, context: Context) {
-        textView.isEditable = isEditable
-        guard textView.text != text else { return }
-
-        let selection = textView.selectedRange
-        textView.attributedText = GooseHighlighter.attributed(text: text)
-        textView.typingAttributes = GooseHighlighter.baseAttributes
-        textView.selectedRange = selection
+    func updateUIView(_ container: EditorContainerView, context: Context) {
+        container.textView.isEditable = isEditable
+        container.applyModelText(text)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -41,84 +27,349 @@ struct GooseCodeEditor: UIViewRepresentable {
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
-        private let text: Binding<String>
-        private weak var textView: UITextView?
+        let text: Binding<String>
 
         init(text: Binding<String>) {
             self.text = text
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            text.wrappedValue = textView.text
-
-            // Re-highlighting keeps the caret where the user left it.
-            let selection = textView.selectedRange
-            textView.attributedText = GooseHighlighter.attributed(text: textView.text)
-            textView.typingAttributes = GooseHighlighter.baseAttributes
-            textView.selectedRange = selection
-        }
-
-        func makeSymbolBar(for textView: UITextView) -> UIView {
-            self.textView = textView
-            let symbols = ["\"", "(", ")", "[", "]", "{", "}", ";", "=", "+", "-", "<", ">"]
-            let toolbar = UIToolbar(frame: CGRect(x: 0, y: 0, width: 0, height: 44))
-            toolbar.items = symbols.map {
-                UIBarButtonItem(title: $0, style: .plain, target: self, action: #selector(insertSymbol(_:)))
-            }
-            toolbar.sizeToFit()
-            return toolbar
-        }
-
-        @objc private func insertSymbol(_ sender: UIBarButtonItem) {
-            guard let textView else { return }
-            textView.insertText(sender.title ?? "")
-            textViewDidChange(textView)
+            (textView.superview as? EditorContainerView)?.textChanged()
         }
     }
 }
 
+/// The text view plus its gutter, wired so both scroll together.
+final class EditorContainerView: UIView {
+    let textView = UITextView()
+    private let gutter = LineNumberGutter()
+    private var isApplyingModelText = false
+    private var lastMarksOffset: CGFloat = 0
+
+    var onTextChange: ((String) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor(VSCode.editorBackground)
+
+        gutter.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(gutter)
+
+        textView.translatesAutoresizingMaskIntoConstraints = false
+        textView.backgroundColor = .clear
+        textView.textColor = UIColor(VSCode.text)
+        textView.tintColor = UIColor(VSCode.statusBar)
+        textView.alwaysBounceVertical = true
+        textView.keyboardDismissMode = .interactive
+        textView.autocorrectionType = .no
+        textView.autocapitalizationType = .none
+        textView.smartDashesType = .no
+        textView.smartQuotesType = .no
+        textView.smartInsertDeleteType = .no
+        textView.spellCheckingType = .no
+        textView.textContainerInset = UIEdgeInsets(top: 10, left: 6, bottom: 24, right: 8)
+        textView.typingAttributes = GooseHighlighter.baseAttributes
+        textView.inputAccessoryView = SymbolBar.make(target: self, action: #selector(insertSymbol(_:)))
+        textView.accessibilityIdentifier = "sourceEditor"
+        addSubview(textView)
+
+        NSLayoutConstraint.activate([
+            gutter.leadingAnchor.constraint(equalTo: leadingAnchor),
+            gutter.topAnchor.constraint(equalTo: topAnchor),
+            gutter.bottomAnchor.constraint(equalTo: bottomAnchor),
+            gutter.widthAnchor.constraint(equalToConstant: 34),
+
+            textView.leadingAnchor.constraint(equalTo: gutter.trailingAnchor),
+            textView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            textView.topAnchor.constraint(equalTo: topAnchor),
+            textView.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+
+        textView.addObserver(self, forKeyPath: "contentOffset", options: [.new], context: nil)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    deinit {
+        textView.removeObserver(self, forKeyPath: "contentOffset")
+    }
+
+    override func observeValue(
+        forKeyPath keyPath: String?,
+        of object: Any?,
+        change: [NSKeyValueChangeKey: Any]?,
+        context: UnsafeMutableRawPointer?
+    ) {
+        guard keyPath == "contentOffset" else {
+            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+            return
+        }
+
+        let offset = textView.contentOffset.y
+        gutter.scrollOffset = offset
+
+        // The marks only cover a window around where they were computed, so a
+        // long scroll refreshes them instead of leaving gaps in the gutter.
+        if abs(offset - lastMarksOffset) > 300 {
+            gutter.marks = lineMarks()
+        }
+    }
+
+    /// Called by the model, so typing does not fight the binding.
+    func applyModelText(_ newText: String) {
+        let current = textView.text ?? ""
+        guard current != newText else { return }
+        isApplyingModelText = true
+
+        let selection = textView.selectedRange
+        let offset = textView.contentOffset
+        textView.attributedText = GooseHighlighter.attributed(text: newText)
+        textView.typingAttributes = GooseHighlighter.baseAttributes
+
+        let limit = (newText as NSString).length
+        let location = min(selection.location, limit)
+        textView.selectedRange = NSRange(
+            location: location,
+            length: min(selection.length, limit - location)
+        )
+        // Assigning text resets the scroll position; put it back.
+        textView.setContentOffset(offset, animated: false)
+
+        isApplyingModelText = false
+        refreshGutter()
+    }
+
+    /// Called by the delegate after the user types.
+    func textChanged() {
+        guard !isApplyingModelText else { return }
+
+        let selection = textView.selectedRange
+        let offset = textView.contentOffset
+        let plain = textView.text ?? ""
+        textView.attributedText = GooseHighlighter.attributed(text: plain)
+        textView.typingAttributes = GooseHighlighter.baseAttributes
+        textView.selectedRange = selection
+        textView.setContentOffset(offset, animated: false)
+
+        onTextChange?(plain)
+        refreshGutter()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        refreshGutter()
+    }
+
+    private func refreshGutter() {
+        gutter.marks = lineMarks()
+        gutter.scrollOffset = textView.contentOffset.y
+        lastMarksOffset = textView.contentOffset.y
+    }
+
+    /// One mark per logical line, at the y of that line's first fragment.
+    /// A wrapped continuation keeps its line's number, as in VS Code.
+    private func lineMarks() -> [LineNumberGutter.Mark] {
+        let layoutManager = textView.layoutManager
+        let textContainer = textView.textContainer
+        let text = textView.text ?? ""
+        guard !text.isEmpty, layoutManager.numberOfGlyphs > 0 else {
+            return [LineNumberGutter.Mark(number: 1, y: 0)]
+        }
+
+        let nsText = text as NSString
+        let inset = textView.textContainerInset
+
+        // `bounds.origin` is the scroll offset in a scroll view, so this maps
+        // the visible area into textContainer coordinates, then widens it so a
+        // small scroll does not have to redo the work.
+        var area = textView.bounds
+        area.origin.x -= inset.left
+        area.origin.y -= inset.top
+        area = area.insetBy(dx: 0, dy: -600)
+
+        let visibleGlyphs = layoutManager.glyphRange(forBoundingRect: area, in: textContainer)
+        let characterRange = layoutManager.characterRange(forGlyphRange: visibleGlyphs, actualGlyphRange: nil)
+        let startCharacter = characterRange.location
+
+        // A line number is 1 + the newlines before its first character.
+        var newlinesBeforeStart = 0
+        var index = 0
+        while index < startCharacter {
+            if nsText.character(at: index) == 10 { newlinesBeforeStart += 1 }
+            index += 1
+        }
+        let startsAtLineBoundary = startCharacter == 0 || nsText.character(at: startCharacter - 1) == 10
+
+        var marks: [LineNumberGutter.Mark] = []
+        var nextNumber: Int? = startsAtLineBoundary ? newlinesBeforeStart + 1 : nil
+
+        layoutManager.enumerateLineFragments(forGlyphRange: visibleGlyphs) { rect, _, _, glyphRange, _ in
+            let fragmentStart = layoutManager
+                .characterRange(forGlyphRange: glyphRange, actualGlyphRange: nil).location
+            let startsLine = fragmentStart == 0 || nsText.character(at: fragmentStart - 1) == 10
+            guard startsLine else { return }
+
+            let number = nextNumber ?? (1 + Self.newlines(before: fragmentStart, in: nsText))
+            nextNumber = number + 1
+            marks.append(LineNumberGutter.Mark(number: number, y: rect.minY + inset.top))
+        }
+
+        return marks.isEmpty ? [LineNumberGutter.Mark(number: 1, y: 0)] : marks
+    }
+
+    private static func newlines(before index: Int, in text: NSString) -> Int {
+        var total = 0
+        var cursor = 0
+        while cursor < index {
+            if text.character(at: cursor) == 10 { total += 1 }
+            cursor += 1
+        }
+        return total
+    }
+
+    @objc private func insertSymbol(_ sender: UIButton) {
+        guard let symbol = sender.title(for: .normal) else { return }
+        textView.insertText(symbol == "−" ? "-" : symbol)
+        textChanged()
+    }
+}
+
+/// Draws the line numbers; the container keeps it in step with the text view.
+final class LineNumberGutter: UIView {
+    struct Mark {
+        let number: Int
+        let y: CGFloat
+    }
+
+    var marks: [Mark] = [] {
+        didSet { setNeedsDisplay() }
+    }
+
+    var scrollOffset: CGFloat = 0 {
+        didSet { setNeedsDisplay() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = UIColor(VSCode.gutter)
+        isOpaque = true
+        isUserInteractionEnabled = false
+        contentMode = .redraw
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) is not used")
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let context = UIGraphicsGetCurrentContext() else { return }
+
+        context.setFillColor(UIColor(VSCode.gutter).cgColor)
+        context.fill(bounds)
+
+        // The hairline VS Code draws between the gutter and the code.
+        context.setFillColor(UIColor(VSCode.panelBorder).cgColor)
+        context.fill(CGRect(x: bounds.width - 0.5, y: 0, width: 0.5, height: bounds.height))
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: VSCode.gutterFont,
+            .foregroundColor: UIColor(VSCode.gutterText),
+        ]
+        let inset: CGFloat = 8
+
+        for mark in marks {
+            let text = "\(mark.number)" as NSString
+            let size = text.size(withAttributes: attributes)
+            let y = mark.y - scrollOffset + (VSCode.lineHeight - size.height) / 2
+            guard y > -30, y < bounds.height + 30 else { continue }
+            text.draw(
+                at: CGPoint(x: bounds.width - inset - size.width, y: y),
+                withAttributes: attributes
+            )
+        }
+    }
+}
+
+/// The symbol row above the keyboard, scrolled sideways so it fits a phone.
+enum SymbolBar {
+    static let symbols = ["\"", "(", ")", "[", "]", "{", "}", ";", "=", "+", "−", "<", ">", ":", "."]
+
+    static func make(target: Any, action: Selector) -> UIView {
+        // An accessory view has to carry its own height: a scroll view has no
+        // intrinsic content size, and a zero-height bar would be invisible.
+        let container = UIView(frame: CGRect(x: 0, y: 0, width: UIScreen.main.bounds.width, height: 44))
+        container.autoresizingMask = [.flexibleWidth]
+        container.backgroundColor = UIColor(VSCode.titleBar)
+
+        let scrollView = UIScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.showsHorizontalScrollIndicator = false
+        scrollView.alwaysBounceHorizontal = true
+        scrollView.backgroundColor = .clear
+        container.addSubview(scrollView)
+
+        let stack = UIStackView()
+        stack.axis = .horizontal
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(stack)
+
+        for symbol in symbols {
+            let button = UIButton(type: .system)
+            button.setTitle(symbol, for: .normal)
+            button.titleLabel?.font = UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)
+            button.setTitleColor(UIColor(VSCode.text), for: .normal)
+            button.widthAnchor.constraint(greaterThanOrEqualToConstant: 34).isActive = true
+            button.heightAnchor.constraint(equalToConstant: 34).isActive = true
+            button.addTarget(target, action: action, for: .touchUpInside)
+            stack.addArrangedSubview(button)
+        }
+
+        NSLayoutConstraint.activate([
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: container.topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -8),
+            stack.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
+            stack.heightAnchor.constraint(equalToConstant: 34),
+        ])
+
+        return container
+    }
+}
+
+/// Dark+ highlighting for the constructs the interpreter understands.
 enum GooseHighlighter {
     static let baseAttributes: [NSAttributedString.Key: Any] = [
-        .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular),
-        .foregroundColor: UIColor.label,
+        .font: VSCode.codeFont,
+        .foregroundColor: UIColor(VSCode.text),
     ]
 
     private static let keywords: Set<String> = [
-        "fn", "recursive", "let", "var", "if", "else", "while", "for", "in",
-        "return", "break", "continue", "as", "true", "false", "null", "match",
-        "struct", "enum", "import", "const",
+        "let", "var", "as", "true", "false", "null", "struct", "enum", "import", "const", "fn",
+    ]
+
+    private static let controlKeywords: Set<String> = [
+        "if", "else", "while", "for", "in", "return", "break", "continue", "match", "recursive",
     ]
 
     private static let types: Set<String> = [
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "str",
     ]
 
-    private static let rules: [(pattern: String, attributes: [NSAttributedString.Key: Any])] = [
-        (
-            #"//[^\n]*"#,
-            [
-                .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular),
-                .foregroundColor: UIColor.secondaryLabel,
-            ]
-        ),
-        (
-            #""(?:\\.|[^"\\\n])*""#,
-            [
-                .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular),
-                .foregroundColor: UIColor.systemRed,
-            ]
-        ),
-        (
-            #"\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"#,
-            [
-                .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .regular),
-                .foregroundColor: UIColor.systemTeal,
-            ]
-        ),
+    private static let rules: [(pattern: String, color: UIColor)] = [
+        (#"//[^\n]*"#, UIColor(VSCode.comment)),
+        (#""(?:\\.|[^"\\\n])*""#, UIColor(VSCode.string)),
+        (#"\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"#, UIColor(VSCode.number)),
     ]
 
-    /// Above this many characters the editor stays plain: re-colouring a large
-    /// buffer on every keystroke is what makes a phone feel slow.
+    /// Above this the editor stays plain: recolouring a big buffer on every
+    /// keystroke is what makes a phone feel slow.
     private static let highlightLimit = 20_000
 
     private static let compiled: [NSRegularExpression] = rules.compactMap {
@@ -132,65 +383,62 @@ enum GooseHighlighter {
         let full = NSRange(location: 0, length: (text as NSString).length)
         for (rule, regex) in zip(rules, compiled) {
             for match in regex.matches(in: text, range: full) {
-                result.addAttributes(rule.attributes, range: match.range)
+                result.addAttributes([.foregroundColor: rule.color], range: match.range)
             }
         }
 
-        applyWords(text, into: result)
+        colourWords(text, into: result)
         return result
     }
 
-    /// Colours keywords, builtin types and the name a `fn` declares.
-    private static func applyWords(_ text: String, into result: NSMutableAttributedString) {
+    /// Keywords, types, and the name a `fn` declares.
+    private static func colourWords(_ text: String, into result: NSMutableAttributedString) {
         let nsText = text as NSString
-        var identifier = ""
-        var identifierStart = 0
+        guard nsText.length > 0 else { return }
 
-        func colour(_ word: String, at start: Int) {
-            guard !word.isEmpty else { return }
-            let range = NSRange(location: start, length: word.count)
-            if keywords.contains(word) {
+        var identifierStart = -1
+
+        func flush(_ end: Int) {
+            defer { identifierStart = -1 }
+            guard identifierStart >= 0, end > identifierStart else { return }
+
+            let range = NSRange(location: identifierStart, length: end - identifierStart)
+            let word = nsText.substring(with: range)
+
+            if controlKeywords.contains(word) {
                 result.addAttributes(
-                    [
-                        .foregroundColor: UIColor.systemPink,
-                        .font: UIFont.monospacedSystemFont(ofSize: 15, weight: .semibold),
-                    ],
+                    [.foregroundColor: UIColor(VSCode.controlKeyword), .font: VSCode.codeFontBold],
+                    range: range
+                )
+            } else if keywords.contains(word) {
+                result.addAttributes(
+                    [.foregroundColor: UIColor(VSCode.keyword), .font: VSCode.codeFontBold],
                     range: range
                 )
             } else if types.contains(word) {
-                result.addAttributes(
-                    [.foregroundColor: UIColor.systemPurple],
-                    range: range
-                )
-            } else if previousWord(before: start, in: nsText) == "fn" {
-                result.addAttributes(
-                    [.foregroundColor: UIColor.systemBlue],
-                    range: range
-                )
+                result.addAttributes([.foregroundColor: UIColor(VSCode.type)], range: range)
+            } else if isDeclaredFunction(before: identifierStart, in: nsText) {
+                result.addAttributes([.foregroundColor: UIColor(VSCode.function)], range: range)
             }
         }
 
         for index in 0..<nsText.length {
             let character = nsText.character(at: index)
-            let isWordCharacter = (character >= 65 && character <= 90)
+            let isWord = (character >= 48 && character <= 57)
+                || (character >= 65 && character <= 90)
                 || (character >= 97 && character <= 122)
-                || (character >= 48 && character <= 57)
                 || character == 95
 
-            if isWordCharacter {
-                if identifier.isEmpty { identifierStart = index }
-                if let scalar = UnicodeScalar(character), scalar.isASCII {
-                    identifier.append(Character(scalar))
-                }
-            } else if !identifier.isEmpty {
-                colour(identifier, at: identifierStart)
-                identifier = ""
+            if isWord {
+                if identifierStart < 0 { identifierStart = index }
+            } else {
+                flush(index)
             }
         }
-        colour(identifier, at: identifierStart)
+        flush(nsText.length)
     }
 
-    private static func previousWord(before index: Int, in text: NSString) -> String? {
+    private static func isDeclaredFunction(before index: Int, in text: NSString) -> Bool {
         var cursor = index - 1
         while cursor >= 0, text.character(at: cursor) == 32 || text.character(at: cursor) == 9 {
             cursor -= 1
@@ -198,11 +446,12 @@ enum GooseHighlighter {
         let end = cursor
         while cursor >= 0 {
             let character = text.character(at: cursor)
-            let isWord = (character >= 97 && character <= 122) || (character >= 65 && character <= 90)
+            let isWord = (character >= 65 && character <= 90) || (character >= 97 && character <= 122)
             if !isWord { break }
             cursor -= 1
         }
-        guard end >= cursor + 1 else { return nil }
-        return text.substring(with: NSRange(location: cursor + 1, length: end - cursor))
+        guard end > cursor else { return false }
+        let previous = text.substring(with: NSRange(location: cursor + 1, length: end - cursor))
+        return previous == "fn" || previous == "recursive"
     }
 }

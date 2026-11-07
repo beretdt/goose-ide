@@ -1,5 +1,8 @@
 import SwiftUI
 import UIKit
+import GooseAI
+
+// MARK: - Samples
 
 struct GooseExample: Identifiable {
     let id = UUID()
@@ -44,20 +47,6 @@ struct GooseExample: Identifiable {
                 stack.push(1); stack.push(2); stack.push(3);
                 print("topo: ", stack.pop());
                 print("pilha: ", stack);
-            }
-            """
-        ),
-        GooseExample(
-            name: "FizzBuzz",
-            source: """
-            fn main() {
-                for i in 16 {
-                    let word: u8[>..] = if i % 15 == 0 { "FizzBuzz" }
-                        else if i % 3 == 0 { "Fizz" }
-                        else if i % 5 == 0 { "Buzz" }
-                        else { str(i) };
-                    print(word);
-                }
             }
             """
         ),
@@ -123,23 +112,26 @@ struct GooseExample: Identifiable {
             """
         ),
         GooseExample(
-            name: "Contagem regressiva",
+            name: "FizzBuzz",
             source: """
             fn main() {
-                var n = 5;
-                while n > 0 {
-                    print(n);
-                    n -= 1;
+                for i in 16 {
+                    let word: u8[>..] = if i % 15 == 0 { "FizzBuzz" }
+                        else if i % 3 == 0 { "Fizz" }
+                        else if i % 5 == 0 { "Buzz" }
+                        else { str(i) };
+                    print(word);
                 }
-                print("decolar!");
             }
             """
         ),
     ]
 }
 
-/// Keeps the last program on disk, so closing the app on a phone does not
-/// throw away what was being written.
+// MARK: - Draft
+
+/// Keeps the last program on disk, so closing the app does not throw away
+/// what was being written.
 private enum GooseDraft {
     private static let key = "goose.draft.source"
 
@@ -150,27 +142,29 @@ private enum GooseDraft {
     static func save(_ source: String) {
         UserDefaults.standard.set(source, forKey: key)
     }
-
-    static func clear() {
-        UserDefaults.standard.removeObject(forKey: key)
-    }
 }
+
+// MARK: - Content
 
 struct ContentView: View {
     @State private var source = GooseDraft.load() ?? GooseExample.all[0].source
     @State private var output = ""
-    @State private var status: Status = .idle
+    @State private var status: RunStatus = .idle
     @State private var isRunning = false
     @State private var elapsed: Double?
     @State private var saveTask: Task<Void, Never>?
+    @State private var showOutput = true
+    @State private var sourceBeforeAI: String?
 
     @StateObject private var github = GitHubSession()
+    @StateObject private var chat = ChatSession()
     @State private var openFile: GitHubSession.OpenFile?
     @State private var showingBrowser = false
     @State private var showingCommit = false
-    @State private var showingSettings = false
+    @State private var showingGitHubSettings = false
+    @State private var showingChat = false
 
-    private enum Status {
+    private enum RunStatus {
         case idle
         case ok
         case failure
@@ -185,175 +179,183 @@ struct ContentView: View {
 
         var color: Color {
             switch self {
-            case .idle: return .secondary
-            case .ok: return .green
-            case .failure: return .red
+            case .idle: return VSCode.dimText
+            case .ok: return VSCode.success
+            case .failure: return VSCode.error
             }
         }
     }
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                header
-                editor
-                Divider()
-                outputPanel
+        VStack(spacing: 0) {
+            tabStrip
+            editor
+            if showOutput {
+                panel
             }
-            .navigationTitle("Goose IDE")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Menu {
-                        Section("Exemplos") {
-                            ForEach(GooseExample.all) { example in
-                                Button(example.name) {
-                                    source = example.source
-                                    openFile = nil
-                                    github.forgetOpenFile()
-                                    output = ""
-                                    status = .idle
-                                }
-                            }
+            statusBar
+        }
+        .background(VSCode.editorBackground)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            activityBar
+        }
+        .preferredColorScheme(.dark)
+        .sheet(isPresented: $showingGitHubSettings) {
+            GitHubSettingsView(session: github)
+        }
+        .sheet(isPresented: $showingBrowser) {
+            GitHubBrowserView(session: github, source: $source, openFile: $openFile)
+        }
+        .sheet(isPresented: $showingCommit) {
+            GitHubCommitView(session: github, source: source, openFile: $openFile)
+        }
+        .sheet(isPresented: $showingChat) {
+            AIChatView(
+                chat: chat,
+                program: source,
+                onUndo: undoAIEdit,
+                canUndo: sourceBeforeAI != nil
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        // One-parameter form: the two-parameter `onChange` is iOS 17 only.
+        .onChange(of: source) { newValue in
+            scheduleSave(newValue)
+        }
+        // The agent writes into the editor while it is still answering.
+        .onChange(of: chat.liveEdit) { newValue in
+            guard let code = newValue, chat.configuration.applyEditsLive, !chat.liveEditClosed else {
+                return
+            }
+            if sourceBeforeAI == nil { sourceBeforeAI = source }
+            source = code
+        }
+        .onChange(of: chat.liveEditClosed) { closed in
+            guard closed, let code = chat.liveEdit, chat.configuration.applyEditsLive else { return }
+            if sourceBeforeAI == nil { sourceBeforeAI = source }
+            source = code
+        }
+    }
+
+    // MARK: - Tab strip
+
+    private var tabStrip: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "doc.text.fill")
+                    .font(.caption2)
+                    .foregroundStyle(VSCode.keyword)
+                Text(tabTitle)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(VSCode.text)
+                    .lineLimit(1)
+                Circle()
+                    .fill(VSCode.dimText)
+                    .frame(width: 5, height: 5)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(VSCode.tabActive)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(VSCode.statusBar)
+                    .frame(height: 1.5)
+            }
+
+            Menu {
+                Section("Exemplos") {
+                    ForEach(GooseExample.all) { example in
+                        Button(example.name) {
+                            source = example.source
+                            openFile = nil
+                            github.forgetOpenFile()
+                            sourceBeforeAI = nil
+                            output = ""
+                            status = .idle
                         }
+                    }
+                }
 
-                        Section("GitHub") {
-                            Button {
-                                if github.isConfigured {
-                                    showingBrowser = true
-                                } else {
-                                    showingSettings = true
-                                }
-                            } label: {
-                                Label("Abrir do GitHub", systemImage: "arrow.down.doc")
-                            }
-
-                            Button {
-                                showingCommit = true
-                            } label: {
-                                Label("Commitar", systemImage: "arrow.up.doc")
-                            }
-                            .disabled(!github.isConfigured)
-
-                            Button {
-                                showingSettings = true
-                            } label: {
-                                Label(
-                                    github.login.map { "Conta: \($0)" } ?? "Conectar ao GitHub",
-                                    systemImage: "person.badge.key"
-                                )
-                            }
-                        }
+                Section("GitHub") {
+                    Button {
+                        if github.isConfigured { showingBrowser = true } else { showingGitHubSettings = true }
                     } label: {
-                        Label("Menu", systemImage: "ellipsis.circle")
+                        Label("Abrir do GitHub", systemImage: "arrow.down.doc")
+                    }
+
+                    Button {
+                        showingCommit = true
+                    } label: {
+                        Label("Commitar", systemImage: "arrow.up.doc")
+                    }
+                    .disabled(!github.isConfigured)
+
+                    Button {
+                        showingGitHubSettings = true
+                    } label: {
+                        Label(
+                            github.login.map { "Conta: \($0)" } ?? "Conectar ao GitHub",
+                            systemImage: "person.badge.key"
+                        )
                     }
                 }
-
-                ToolbarItem(placement: .topBarTrailing) {
-                    ShareLink(item: source, subject: Text("Programa Goose")) {
-                        Label("Compartilhar", systemImage: "square.and.arrow.up")
-                    }
-                }
-            }
-            // One-parameter form: the two-parameter `onChange` is iOS 17 only.
-            .onChange(of: source) { newValue in
-                scheduleSave(newValue)
-            }
-            .sheet(isPresented: $showingSettings) {
-                GitHubSettingsView(session: github)
-            }
-            .sheet(isPresented: $showingBrowser) {
-                GitHubBrowserView(
-                    session: github,
-                    source: $source,
-                    openFile: $openFile
-                )
-            }
-            .sheet(isPresented: $showingCommit) {
-                GitHubCommitView(
-                    session: github,
-                    source: source,
-                    openFile: $openFile
-                )
-            }
-        }
-    }
-
-    /// Saves after a pause in typing, not on every keystroke.
-    private func scheduleSave(_ text: String) {
-        saveTask?.cancel()
-        saveTask = Task {
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            GooseDraft.save(text)
-        }
-    }
-
-    private var header: some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text("EDITOR")
-                    .font(.caption.weight(.semibold))
-                    .tracking(1.2)
-                    .foregroundStyle(.secondary)
-
-                if let openFile {
-                    Text("\(openFile.repository) · \(openFile.path)")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer()
-
-            Button {
-                dismissKeyboard()
-                runProgram()
             } label: {
-                if isRunning {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 74)
-                } else {
-                    Label("Executar", systemImage: "play.fill")
-                        .frame(width: 74)
-                }
+                Image(systemName: "plus")
+                    .font(.caption.weight(.semibold))
+                    .frame(width: 36, height: 34)
+                    .foregroundStyle(VSCode.dimText)
             }
-            .font(.subheadline.weight(.semibold))
-            .buttonStyle(.borderedProminent)
-            .disabled(isRunning)
-            .accessibilityIdentifier("runProgram")
+            .background(VSCode.tabInactive)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(VSCode.panelBorder).frame(height: 0.5)
+        }
     }
+
+    private var tabTitle: String {
+        if let openFile {
+            return (openFile.path as NSString).lastPathComponent
+        }
+        return "main.goose"
+    }
+
+    // MARK: - Editor
 
     private var editor: some View {
         GooseCodeEditor(text: $source)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityIdentifier("sourceEditor")
     }
 
-    private var outputPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+    // MARK: - Output panel
+
+    private var panel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
                 Text("SAÍDA")
-                    .font(.caption.weight(.semibold))
-                    .tracking(1.2)
-                    .foregroundStyle(.secondary)
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1)
+                    .foregroundStyle(VSCode.text)
+                    .padding(.vertical, 7)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(VSCode.statusBar).frame(height: 1.5)
+                    }
 
                 Circle()
                     .fill(status.color)
                     .frame(width: 6, height: 6)
+
                 Text(status.label)
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(VSCode.faintText)
 
                 if let elapsed, status == .ok {
                     Text(String(format: "%.0f ms", elapsed * 1000))
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .monospacedDigit()
+                        .foregroundStyle(VSCode.faintText)
                 }
 
                 Spacer()
@@ -364,39 +366,171 @@ struct ContentView: View {
                     } label: {
                         Image(systemName: "doc.on.doc")
                     }
-                    .font(.footnote)
                     .accessibilityLabel("Copiar saída")
                 }
 
                 Button {
                     output = ""
                     status = .idle
+                    elapsed = nil
                 } label: {
                     Image(systemName: "trash")
                 }
-                .font(.footnote)
                 .accessibilityLabel("Limpar saída")
+
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { showOutput = false }
+                } label: {
+                    Image(systemName: "chevron.down")
+                }
+                .accessibilityLabel("Recolher a saída")
             }
+            .font(.footnote)
+            .foregroundStyle(VSCode.dimText)
+            .padding(.horizontal, 12)
 
             ScrollView {
-                Text(output.isEmpty ? "Toque em Executar para rodar seu programa." : output)
-                    .font(.system(.footnote, design: .monospaced))
-                    .foregroundStyle(outputColor)
+                Text(output.isEmpty ? "Toque em ▶ para rodar seu programa." : output)
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(
+                        output.isEmpty ? VSCode.faintText : (status == .failure ? VSCode.error : VSCode.text)
+                    )
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 10)
                     .textSelection(.enabled)
             }
-            .frame(minHeight: 90, maxHeight: 190)
+            .frame(minHeight: 70, maxHeight: 170)
             .accessibilityIdentifier("programOutput")
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.secondary.opacity(0.08))
+        .background(VSCode.sidebar)
+        .overlay(alignment: .top) {
+            Rectangle().fill(VSCode.panelBorder).frame(height: 0.5)
+        }
     }
 
-    private var outputColor: Color {
-        if output.isEmpty { return .secondary }
-        return status == .failure ? .red : .primary
+    // MARK: - Status bar
+
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            Label(openFile?.repository ?? "Goose", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+                .lineLimit(1)
+
+            if let openFile {
+                Text(openFile.branch)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+
+            Text(chat.isStreaming ? "agente escrevendo…" : "\(lineCount) linhas")
+                .lineLimit(1)
+
+            Text("Goose")
+                .fontWeight(.semibold)
+        }
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(.white)
+        .padding(.horizontal, 12)
+        .frame(height: 24)
+        .background(VSCode.statusBar)
+    }
+
+    private var lineCount: Int {
+        source.split(separator: "\n", omittingEmptySubsequences: false).count
+    }
+
+    // MARK: - Activity bar
+
+    private var activityBar: some View {
+        HStack(spacing: 4) {
+            ActivityButton(
+                systemImage: "doc.badge.plus",
+                label: "Novo arquivo",
+                action: { newFile() }
+            )
+
+            ActivityButton(
+                systemImage: "arrow.down.doc",
+                label: "Abrir do GitHub",
+                action: {
+                    if github.isConfigured { showingBrowser = true } else { showingGitHubSettings = true }
+                }
+            )
+
+            Spacer(minLength: 0)
+
+            Button {
+                dismissKeyboard()
+                runProgram()
+            } label: {
+                Image(systemName: "play.fill")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 46, height: 34)
+                    .background(isRunning ? VSCode.faintText : VSCode.statusBar)
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            }
+            .disabled(isRunning)
+            .accessibilityIdentifier("runProgram")
+            .accessibilityLabel("Executar")
+
+            Spacer(minLength: 0)
+
+            ActivityButton(
+                systemImage: "sparkle",
+                label: "Agente",
+                isActive: showingChat,
+                badge: chat.isStreaming ? 1 : nil,
+                action: { showingChat = true }
+            )
+
+            ActivityButton(
+                systemImage: showOutput ? "rectangle.bottomthird.inset.filled" : "rectangle.bottomthird.inset",
+                label: showOutput ? "Recolher saída" : "Mostrar saída",
+                isActive: showOutput,
+                action: {
+                    withAnimation(.easeInOut(duration: 0.15)) { showOutput.toggle() }
+                }
+            )
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(VSCode.activityBar)
+        .overlay(alignment: .top) {
+            Rectangle().fill(VSCode.panelBorder).frame(height: 0.5)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func newFile() {
+        source = """
+        fn main() {
+            print("novo programa");
+        }
+        """
+        openFile = nil
+        github.forgetOpenFile()
+        sourceBeforeAI = nil
+        output = ""
+        status = .idle
+    }
+
+    private func undoAIEdit() {
+        guard let snapshot = sourceBeforeAI else { return }
+        source = snapshot
+        sourceBeforeAI = nil
+    }
+
+    /// Saves after a pause in typing, not on every keystroke.
+    private func scheduleSave(_ text: String) {
+        saveTask?.cancel()
+        saveTask = Task {
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            GooseDraft.save(text)
+        }
     }
 
     private func dismissKeyboard() {
@@ -437,6 +571,7 @@ struct ContentView: View {
                 status = .failure
             }
             isRunning = false
+            showOutput = true
         }
     }
 }

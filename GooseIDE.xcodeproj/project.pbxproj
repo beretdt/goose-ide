@@ -24,6 +24,15 @@
 		C20000000000000000000007 /* GitHubSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000007 /* GitHubSettingsView.swift */; };
 		C20000000000000000000008 /* GitHubBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000008 /* GitHubBrowserView.swift */; };
 		C20000000000000000000009 /* GitHubCommitView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B20000000000000000000009 /* GitHubCommitView.swift */; };
+		C30000000000000000000001 /* AITypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000001 /* AITypes.swift */; };
+		C30000000000000000000002 /* AITransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000002 /* AITransport.swift */; };
+		C30000000000000000000003 /* AIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000003 /* AIClient.swift */; };
+		C30000000000000000000004 /* AIEditExtractor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000004 /* AIEditExtractor.swift */; };
+		C30000000000000000000005 /* VSCodeTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000005 /* VSCodeTheme.swift */; };
+		C30000000000000000000006 /* AIKeyStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000006 /* AIKeyStore.swift */; };
+		C30000000000000000000007 /* ChatSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000007 /* ChatSession.swift */; };
+		C30000000000000000000008 /* AIChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000008 /* AIChatView.swift */; };
+		C30000000000000000000009 /* AISettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B30000000000000000000009 /* AISettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +55,15 @@
 		B20000000000000000000007 /* GitHubSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/GitHubSettingsView.swift; sourceTree = "<group>"; };
 		B20000000000000000000008 /* GitHubBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/GitHubBrowserView.swift; sourceTree = "<group>"; };
 		B20000000000000000000009 /* GitHubCommitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/GitHubCommitView.swift; sourceTree = "<group>"; };
+		B30000000000000000000001 /* AITypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseAI/AITypes.swift; sourceTree = "<group>"; };
+		B30000000000000000000002 /* AITransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseAI/AITransport.swift; sourceTree = "<group>"; };
+		B30000000000000000000003 /* AIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseAI/AIClient.swift; sourceTree = "<group>"; };
+		B30000000000000000000004 /* AIEditExtractor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sources/GooseAI/AIEditExtractor.swift; sourceTree = "<group>"; };
+		B30000000000000000000005 /* VSCodeTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/VSCodeTheme.swift; sourceTree = "<group>"; };
+		B30000000000000000000006 /* AIKeyStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/AIKeyStore.swift; sourceTree = "<group>"; };
+		B30000000000000000000007 /* ChatSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/ChatSession.swift; sourceTree = "<group>"; };
+		B30000000000000000000008 /* AIChatView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/AIChatView.swift; sourceTree = "<group>"; };
+		B30000000000000000000009 /* AISettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iOS/GooseIDE/AISettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +88,15 @@
 				B10000000000000000000008 /* GooseParser.swift */,
 				B10000000000000000000009 /* GooseRuntime.swift */,
 				B10000000000000000000010 /* GooseCodeEditor.swift */,
+				B30000000000000000000001 /* AITypes.swift */,
+				B30000000000000000000002 /* AITransport.swift */,
+				B30000000000000000000003 /* AIClient.swift */,
+				B30000000000000000000004 /* AIEditExtractor.swift */,
+				B30000000000000000000005 /* VSCodeTheme.swift */,
+				B30000000000000000000006 /* AIKeyStore.swift */,
+				B30000000000000000000007 /* ChatSession.swift */,
+				B30000000000000000000008 /* AIChatView.swift */,
+				B30000000000000000000009 /* AISettingsView.swift */,
 				B20000000000000000000001 /* GooseGitHub/HTTPTransport.swift */,
 				B20000000000000000000002 /* GooseGitHub/GitHubError.swift */,
 				B20000000000000000000003 /* GooseGitHub/GitHubModels.swift */,
@@ -125,6 +152,15 @@
 				A10000000000000000000007 /* GooseParser.swift in Sources */,
 				A10000000000000000000008 /* GooseRuntime.swift in Sources */,
 				A10000000000000000000009 /* GooseCodeEditor.swift in Sources */,
+				C30000000000000000000001 /* AITypes.swift in Sources */,
+				C30000000000000000000002 /* AITransport.swift in Sources */,
+				C30000000000000000000003 /* AIClient.swift in Sources */,
+				C30000000000000000000004 /* AIEditExtractor.swift in Sources */,
+				C30000000000000000000005 /* VSCodeTheme.swift in Sources */,
+				C30000000000000000000006 /* AIKeyStore.swift in Sources */,
+				C30000000000000000000007 /* ChatSession.swift in Sources */,
+				C30000000000000000000008 /* AIChatView.swift in Sources */,
+				C30000000000000000000009 /* AISettingsView.swift in Sources */,
 				C20000000000000000000001 /* GooseGitHub/HTTPTransport.swift in Sources */,
 				C20000000000000000000002 /* GooseGitHub/GitHubError.swift in Sources */,
 				C20000000000000000000003 /* GooseGitHub/GitHubModels.swift in Sources */,
