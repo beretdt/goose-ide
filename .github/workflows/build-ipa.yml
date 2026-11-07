@@ -1,0 +1,48 @@
+name: Unsigned IPA
+
+# Builds an unsigned .ipa on a macOS runner so the app can be sideloaded from
+# a machine that has no Xcode. Signing happens on the device side, with a free
+# Apple ID (AltStore/SideStore/Sideloadly), so no Apple account is needed here.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  ipa:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build for device without signing
+        run: |
+          xcodebuild build \
+            -project GooseIDE.xcodeproj \
+            -scheme GooseIDE \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_ENTITLEMENTS=""
+
+      - name: Package Payload/GooseIDE.app into an .ipa
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/GooseIDE.app"
+          test -d "$APP" || { echo "app bundle not found at $APP"; exit 1; }
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out
+          zip -qry GooseIDE-unsigned.ipa Payload
+          shasum -a 256 GooseIDE-unsigned.ipa | tee GooseIDE-unsigned.ipa.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GooseIDE-unsigned-ipa
+          path: |
+            out/GooseIDE-unsigned.ipa
+            out/GooseIDE-unsigned.ipa.sha256
+          if-no-files-found: error
