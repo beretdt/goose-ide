@@ -38,6 +38,7 @@ struct GitHubBrowserView: View {
                                 repository: repository,
                                 source: $source,
                                 openFile: $openFile,
+                                onWillOpen: onWillOpen,
                                 onOpen: { dismiss() }
                             )
                         } label: {
@@ -109,6 +110,7 @@ private struct GitHubFileListView: View {
     let repository: GitHubRepository
     @Binding var source: String
     @Binding var openFile: GitHubSession.OpenFile?
+    let onWillOpen: () -> Void
     let onOpen: () -> Void
 
     @State private var branches: [String] = []
