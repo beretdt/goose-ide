@@ -5,6 +5,7 @@ import UIKit
 /// bar above the keyboard.
 struct GooseCodeEditor: UIViewRepresentable {
     @Binding var text: String
+    var language: CodeLanguage = .goose
     var isEditable = true
 
     func makeUIView(context: Context) -> EditorContainerView {
@@ -13,13 +14,13 @@ struct GooseCodeEditor: UIViewRepresentable {
         container.onTextChange = { newText in
             context.coordinator.text.wrappedValue = newText
         }
-        container.applyModelText(text)
+        container.applyModelText(text, language: language)
         return container
     }
 
     func updateUIView(_ container: EditorContainerView, context: Context) {
         container.textView.isEditable = isEditable
-        container.applyModelText(text)
+        container.applyModelText(text, language: language)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -28,13 +29,28 @@ struct GooseCodeEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         let text: Binding<String>
+        private var pendingEditRange: NSRange?
 
         init(text: Binding<String>) {
             self.text = text
         }
 
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText replacement: String
+        ) -> Bool {
+            pendingEditRange = NSRange(
+                location: range.location,
+                length: (replacement as NSString).length
+            )
+            return true
+        }
+
         func textViewDidChange(_ textView: UITextView) {
-            (textView.superview as? EditorContainerView)?.textChanged()
+            let changedRange = pendingEditRange
+            pendingEditRange = nil
+            (textView.superview as? EditorContainerView)?.textChanged(changedRange: changedRange)
         }
     }
 }
@@ -45,6 +61,7 @@ final class EditorContainerView: UIView {
     private let gutter = LineNumberGutter()
     private var isApplyingModelText = false
     private var lastMarksOffset: CGFloat = 0
+    private var language: CodeLanguage = .goose
 
     var onTextChange: ((String) -> Void)?
 
@@ -118,14 +135,15 @@ final class EditorContainerView: UIView {
     }
 
     /// Called by the model, so typing does not fight the binding.
-    func applyModelText(_ newText: String) {
+    func applyModelText(_ newText: String, language newLanguage: CodeLanguage) {
         let current = textView.text ?? ""
-        guard current != newText else { return }
+        guard current != newText || language != newLanguage else { return }
+        language = newLanguage
         isApplyingModelText = true
 
         let selection = textView.selectedRange
         let offset = textView.contentOffset
-        textView.attributedText = GooseHighlighter.attributed(text: newText)
+        textView.attributedText = GooseHighlighter.attributed(text: newText, language: language)
         textView.typingAttributes = GooseHighlighter.baseAttributes
 
         let limit = (newText as NSString).length
@@ -142,16 +160,18 @@ final class EditorContainerView: UIView {
     }
 
     /// Called by the delegate after the user types.
-    func textChanged() {
+    func textChanged(changedRange: NSRange? = nil) {
         guard !isApplyingModelText else { return }
 
         let selection = textView.selectedRange
-        let offset = textView.contentOffset
         let plain = textView.text ?? ""
-        textView.attributedText = GooseHighlighter.attributed(text: plain)
+        GooseHighlighter.applyIncremental(
+            to: textView.textStorage,
+            text: plain as NSString,
+            changedRange: changedRange ?? NSRange(location: selection.location, length: 0),
+            language: language
+        )
         textView.typingAttributes = GooseHighlighter.baseAttributes
-        textView.selectedRange = selection
-        textView.setContentOffset(offset, animated: false)
 
         onTextChange?(plain)
         refreshGutter()
@@ -351,51 +371,146 @@ enum GooseHighlighter {
     ]
 
     private static let keywords: Set<String> = [
-        "let", "var", "as", "true", "false", "null", "struct", "enum", "import", "const", "fn",
+        "let", "var", "as", "true", "false", "null", "struct", "enum", "import", "const", "fn"
     ]
 
-    private static let controlKeywords: Set<String> = [
+    private static let gooseControlKeywords: Set<String> = [
         "if", "else", "while", "for", "in", "return", "break", "continue",
         "match", "recursive", "loop", "block", "guard", "defer",
     ]
 
-    private static let types: Set<String> = [
+    private static let gooseTypes: Set<String> = [
         "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "str",
     ]
 
-    private static let rules: [(pattern: String, color: UIColor)] = [
-        (#"//[^\n]*"#, UIColor(VSCode.comment)),
-        (#""(?:\\.|[^"\\\n])*""#, UIColor(VSCode.string)),
-        (#"\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"#, UIColor(VSCode.number)),
-    ]
+    private static func wordSets(
+        for language: CodeLanguage
+    ) -> (keywords: Set<String>, controls: Set<String>, types: Set<String>) {
+        switch language {
+        case .goose:
+            return (gooseKeywords, gooseControlKeywords, gooseTypes)
+        case .c:
+            return (
+                ["auto", "const", "enum", "extern", "inline", "register", "restrict", "static", "struct", "typedef", "union", "volatile"],
+                ["break", "case", "continue", "default", "do", "else", "for", "goto", "if", "return", "switch", "while"],
+                ["_Bool", "bool", "char", "double", "FILE", "float", "int", "long", "short", "signed", "size_t", "unsigned", "void"]
+            )
+        case .assembly:
+            return (
+                ["bits", "default", "extern", "global", "section", "db", "dw", "dd", "dq", "resb", "resw", "resd", "resq", "equ"],
+                ["call", "int", "ja", "jae", "jb", "jbe", "je", "jg", "jge", "jl", "jle", "jmp", "jne", "jnz", "jz", "lea", "mov", "pop", "push", "ret", "syscall", "xor"],
+                ["al", "ax", "eax", "rax", "bl", "bx", "ebx", "rbx", "cl", "cx", "ecx", "rcx", "dl", "dx", "edx", "rdx", "rsi", "rdi", "rbp", "rsp", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
+            )
+        }
+    }
+
+    private static func rules(for language: CodeLanguage) -> [(pattern: String, color: UIColor)] {
+        let commentPattern = language == .assembly ? #";[^\n]*"# :
+            (language == .c ? #"//[^\n]*|/\*[\s\S]*?\*/"# : #"//[^\n]*"#)
+        var result: [(pattern: String, color: UIColor)] = [
+            (commentPattern, UIColor(VSCode.comment)),
+            (#""(?:\\.|[^"\\\n])*""#, UIColor(VSCode.string)),
+            (#"\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b"#, UIColor(VSCode.number)),
+        ]
+        if language == .c {
+            result.append((#"(?m)^\s*#\s*[A-Za-z_][A-Za-z0-9_]*"#, UIColor(VSCode.keyword)))
+            result.append((#"'(?:\\.|[^'\\\n])*'"#, UIColor(VSCode.string)))
+        } else if language == .assembly {
+            result.append((#"(?m)^[A-Za-z_.$][A-Za-z0-9_.$]*:"#, UIColor(VSCode.function)))
+        }
+        return result
+    }
 
     /// Above this the editor stays plain: recolouring a big buffer on every
     /// keystroke is what makes a phone feel slow.
     private static let highlightLimit = 20_000
 
-    private static let compiled: [NSRegularExpression] = rules.compactMap {
-        try? NSRegularExpression(pattern: $0.pattern)
-    }
+    private static let compiled: [CodeLanguage: [NSRegularExpression]] = {
+        var result: [CodeLanguage: [NSRegularExpression]] = [:]
+        for language in CodeLanguage.allCases {
+            result[language] = rules(for: language).compactMap {
+                try? NSRegularExpression(pattern: $0.pattern)
+            }
+        }
+        return result
+    }()
 
-    static func attributed(text: String) -> NSAttributedString {
+    static func attributed(text: String, language: CodeLanguage = .goose) -> NSAttributedString {
         let result = NSMutableAttributedString(string: text, attributes: baseAttributes)
         guard text.count <= highlightLimit else { return result }
 
         let full = NSRange(location: 0, length: (text as NSString).length)
-        for (rule, regex) in zip(rules, compiled) {
+        for (rule, regex) in zip(rules(for: language), compiled[language] ?? []) {
             for match in regex.matches(in: text, range: full) {
                 result.addAttributes([.foregroundColor: rule.color], range: match.range)
             }
         }
 
-        colourWords(text, into: result)
+        colourWords(text, into: result, language: language)
         return result
     }
 
+    /// Recolours only the logical lines touched by an edit; typing does not
+    /// rebuild the attributed string for the entire source file.
+    static func applyIncremental(
+        to storage: NSTextStorage,
+        text: NSString,
+        changedRange: NSRange,
+        language: CodeLanguage = .goose
+    ) {
+        guard storage.length == text.length else { return }
+
+        let location = min(max(changedRange.location, 0), text.length)
+        let replacementEnd = min(max(NSMaxRange(changedRange), location), text.length)
+        let previousBreak = text.range(
+            of: "\n",
+            options: .backwards,
+            range: NSRange(location: 0, length: location)
+        )
+        let lineStart = previousBreak.location == NSNotFound ? 0 : NSMaxRange(previousBreak)
+        let nextBreak = text.range(
+            of: "\n",
+            options: [],
+            range: NSRange(location: replacementEnd, length: text.length - replacementEnd)
+        )
+        let lineEnd = nextBreak.location == NSNotFound ? text.length : NSMaxRange(nextBreak)
+        let lineRange = NSRange(location: lineStart, length: lineEnd - lineStart)
+        guard lineRange.length > 0 else { return }
+
+        guard lineRange.length <= highlightLimit else {
+            let insertedLength = replacementEnd - location
+            if insertedLength > 0 {
+                storage.setAttributes(
+                    baseAttributes,
+                    range: NSRange(location: location, length: insertedLength)
+                )
+            }
+            return
+        }
+
+        let line = text.substring(with: lineRange)
+        let styledLine = attributed(text: line, language: language)
+        storage.beginEditing()
+        styledLine.enumerateAttributes(
+            in: NSRange(location: 0, length: styledLine.length)
+        ) { attributes, range, _ in
+            storage.setAttributes(
+                attributes,
+                range: NSRange(location: lineRange.location + range.location, length: range.length)
+            )
+        }
+        storage.endEditing()
+    }
+
     /// Keywords, types, and the name a `fn` declares.
-    private static func colourWords(_ text: String, into result: NSMutableAttributedString) {
+    private static func colourWords(
+        _ text: String,
+        into result: NSMutableAttributedString,
+        language: CodeLanguage
+    ) {
         let nsText = text as NSString
         guard nsText.length > 0 else { return }
+        let sets = wordSets(for: language)
 
         var identifierStart = -1
 
@@ -406,19 +521,19 @@ enum GooseHighlighter {
             let range = NSRange(location: identifierStart, length: end - identifierStart)
             let word = nsText.substring(with: range)
 
-            if controlKeywords.contains(word) {
+            if sets.controls.contains(word) {
                 result.addAttributes(
                     [.foregroundColor: UIColor(VSCode.controlKeyword), .font: VSCode.codeFontBold],
                     range: range
                 )
-            } else if keywords.contains(word) {
+            } else if sets.types.contains(word) {
+                result.addAttributes([.foregroundColor: UIColor(VSCode.type)], range: range)
+            } else if sets.keywords.contains(word) {
                 result.addAttributes(
                     [.foregroundColor: UIColor(VSCode.keyword), .font: VSCode.codeFontBold],
                     range: range
                 )
-            } else if types.contains(word) {
-                result.addAttributes([.foregroundColor: UIColor(VSCode.type)], range: range)
-            } else if isDeclaredFunction(before: identifierStart, in: nsText) {
+            } else if isDeclaredFunction(before: identifierStart, in: nsText, language: language) {
                 result.addAttributes([.foregroundColor: UIColor(VSCode.function)], range: range)
             }
         }
@@ -439,7 +554,11 @@ enum GooseHighlighter {
         flush(nsText.length)
     }
 
-    private static func isDeclaredFunction(before index: Int, in text: NSString) -> Bool {
+    private static func isDeclaredFunction(
+        before index: Int,
+        in text: NSString,
+        language: CodeLanguage
+    ) -> Bool {
         var cursor = index - 1
         while cursor >= 0, text.character(at: cursor) == 32 || text.character(at: cursor) == 9 {
             cursor -= 1
@@ -453,6 +572,13 @@ enum GooseHighlighter {
         }
         guard end > cursor else { return false }
         let previous = text.substring(with: NSRange(location: cursor + 1, length: end - cursor))
-        return previous == "fn" || previous == "recursive"
+        switch language {
+        case .goose:
+            return previous == "fn" || previous == "recursive"
+        case .c:
+            return wordSets(for: .c).types.contains(previous)
+        case .assembly:
+            return false
+        }
     }
 }

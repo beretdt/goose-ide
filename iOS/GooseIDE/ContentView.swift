@@ -168,12 +168,20 @@ private enum GooseDraft {
     static func save(_ source: String) {
         UserDefaults.standard.set(source, forKey: key)
     }
+
+    static func loadPath() -> String? {
+        UserDefaults.standard.string(forKey: "goose.workspace.path")
+    }
+
+    static func savePath(_ path: String) {
+        UserDefaults.standard.set(path, forKey: "goose.workspace.path")
+    }
 }
 
 // MARK: - Content
 
 struct ContentView: View {
-    @State private var source = GooseDraft.load() ?? GooseExample.all[0].source
+    @State private var source: String
     @State private var output = ""
     @State private var status: RunStatus = .idle
     @State private var isRunning = false
@@ -182,13 +190,30 @@ struct ContentView: View {
     @State private var showOutput = true
     @State private var sourceBeforeAI: String?
 
+    @StateObject private var workspace: LocalWorkspaceStore
     @StateObject private var github = GitHubSession()
     @StateObject private var chat = ChatSession()
+    @AppStorage("goose.piston.baseURL") private var pistonEndpoint = ""
+    @AppStorage("goose.piston.acceptedEndpoint") private var acceptedPistonEndpoint = ""
+    @State private var activeWorkspacePath: String?
+    @State private var activeDocumentTitle: String
     @State private var openFile: GitHubSession.OpenFile?
+    @State private var showingExplorer = false
+    @State private var showingRunnerSettings = false
+    @State private var showingRemoteConsent = false
     @State private var showingBrowser = false
     @State private var showingCommit = false
     @State private var showingGitHubSettings = false
     @State private var showingChat = false
+
+    init() {
+        let initialSource = GooseDraft.load() ?? GooseExample.all[0].source
+        let initialPath = GooseDraft.loadPath() ?? "main.goose"
+        _source = State(initialValue: initialSource)
+        _workspace = StateObject(wrappedValue: LocalWorkspaceStore(initialSource: initialSource))
+        _activeWorkspacePath = State(initialValue: initialPath)
+        _activeDocumentTitle = State(initialValue: (initialPath as NSString).lastPathComponent)
+    }
 
     private enum RunStatus {
         case idle
@@ -229,8 +254,26 @@ struct ContentView: View {
         .sheet(isPresented: $showingGitHubSettings) {
             GitHubSettingsView(session: github)
         }
+        .sheet(isPresented: $showingExplorer) {
+            WorkspaceExplorerView(
+                workspace: workspace,
+                activePath: activeWorkspacePath,
+                onOpen: openWorkspaceFile,
+                onNewFile: { newFile($0) }
+            )
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+        }
+        .sheet(isPresented: $showingRunnerSettings) {
+            CodeRunnerSettingsView()
+        }
         .sheet(isPresented: $showingBrowser) {
-            GitHubBrowserView(session: github, source: $source, openFile: $openFile)
+            GitHubBrowserView(
+                session: github,
+                source: $source,
+                openFile: $openFile,
+                onWillOpen: prepareForExternalDocument
+            )
         }
         .sheet(isPresented: $showingCommit) {
             GitHubCommitView(session: github, source: source, openFile: $openFile)
@@ -244,6 +287,15 @@ struct ContentView: View {
             )
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
+        }
+        .alert("Enviar código para execução?", isPresented: $showingRemoteConsent) {
+            Button("Cancelar", role: .cancel) {}
+            Button("Enviar") {
+                acceptedPistonEndpoint = pistonEndpoint
+                runRemoteProgram()
+            }
+        } message: {
+            Text("O código será enviado para \(runnerHost) para compilação e execução. Use somente um servidor que você controla.")
         }
         // One-parameter form: the two-parameter `onChange` is iOS 17 only.
         .onChange(of: source) { newValue in
@@ -295,12 +347,7 @@ struct ContentView: View {
                 Section("Exemplos") {
                     ForEach(GooseExample.all) { example in
                         Button(example.name) {
-                            source = example.source
-                            openFile = nil
-                            github.forgetOpenFile()
-                            sourceBeforeAI = nil
-                            output = ""
-                            status = .idle
+                            openExample(example)
                         }
                     }
                 }
@@ -328,6 +375,14 @@ struct ContentView: View {
                         )
                     }
                 }
+
+                Section("Execução") {
+                    Button {
+                        showingRunnerSettings = true
+                    } label: {
+                        Label("Configurar runner C/Assembly", systemImage: "terminal")
+                    }
+                }
             } label: {
                 Image(systemName: "plus")
                     .font(.caption.weight(.semibold))
@@ -345,14 +400,25 @@ struct ContentView: View {
         if let openFile {
             return (openFile.path as NSString).lastPathComponent
         }
-        return "main.goose"
+        return activeDocumentTitle
     }
 
     // MARK: - Editor
 
     private var editor: some View {
-        GooseCodeEditor(text: $source)
+        GooseCodeEditor(text: $source, language: currentLanguage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var currentLanguage: CodeLanguage {
+        if let openFile, let language = CodeLanguage.detect(path: openFile.path) {
+            return language
+        }
+        return CodeLanguage.detect(path: activeWorkspacePath ?? activeDocumentTitle) ?? .goose
+    }
+
+    private var runnerHost: String {
+        URLComponents(string: pistonEndpoint)?.host ?? pistonEndpoint
     }
 
     // MARK: - Output panel
@@ -439,7 +505,10 @@ struct ContentView: View {
 
     private var statusBar: some View {
         HStack(spacing: 12) {
-            Label(openFile?.repository ?? "Goose", systemImage: "point.topleft.down.curvedto.point.bottomright.up")
+            Label(
+                openFile?.repository ?? (activeWorkspacePath == nil ? "Goose" : "Workspace"),
+                systemImage: "point.topleft.down.curvedto.point.bottomright.up"
+            )
                 .lineLimit(1)
 
             if let openFile {
@@ -452,7 +521,7 @@ struct ContentView: View {
             Text(chat.isStreaming ? "agente escrevendo…" : "\(lineCount) linhas")
                 .lineLimit(1)
 
-            Text("Goose")
+            Text(currentLanguage.shortName)
                 .fontWeight(.semibold)
         }
         .font(.system(size: 11, weight: .medium))
@@ -470,6 +539,13 @@ struct ContentView: View {
 
     private var activityBar: some View {
         HStack(spacing: 4) {
+            ActivityButton(
+                systemImage: "folder",
+                label: "Explorer",
+                isActive: showingExplorer,
+                action: { showingExplorer = true }
+            )
+
             ActivityButton(
                 systemImage: "doc.badge.plus",
                 label: "Novo arquivo",
@@ -530,17 +606,55 @@ struct ContentView: View {
 
     // MARK: - Actions
 
-    private func newFile() {
-        source = """
-        fn main() {
-            print("novo programa");
+    private func newFile(_ language: CodeLanguage = .goose) {
+        do {
+            let file = try workspace.createFile(language: language)
+            openWorkspaceFile(file, source: try workspace.readFile(at: file.path))
+        } catch {
+            workspace.report(error)
         }
-        """
+    }
+
+    private func openExample(_ example: GooseExample) {
+        do {
+            let file = try workspace.exampleFile(named: example.name, source: example.source)
+            openWorkspaceFile(file, source: try workspace.readFile(at: file.path))
+        } catch {
+            workspace.report(error)
+        }
+    }
+
+    private func openWorkspaceFile(_ file: WorkspaceFile, source newSource: String) {
+        persistCurrentDocument()
+        activeWorkspacePath = file.path
+        activeDocumentTitle = file.name
+        GooseDraft.savePath(file.path)
+        GooseDraft.save(newSource)
+        source = newSource
         openFile = nil
         github.forgetOpenFile()
         sourceBeforeAI = nil
         output = ""
         status = .idle
+        showingExplorer = false
+    }
+
+    private func persistCurrentDocument() {
+        saveTask?.cancel()
+        guard let activeWorkspacePath else { return }
+        do {
+            try workspace.save(source, at: activeWorkspacePath)
+            GooseDraft.save(source)
+            GooseDraft.savePath(activeWorkspacePath)
+        } catch {
+            workspace.report(error)
+        }
+    }
+
+    private func prepareForExternalDocument() {
+        persistCurrentDocument()
+        activeWorkspacePath = nil
+        activeDocumentTitle = "GitHub"
     }
 
     private func undoAIEdit() {
@@ -551,11 +665,19 @@ struct ContentView: View {
 
     /// Saves after a pause in typing, not on every keystroke.
     private func scheduleSave(_ text: String) {
+        let targetPath = activeWorkspacePath
         saveTask?.cancel()
         saveTask = Task {
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled else { return }
-            GooseDraft.save(text)
+            guard let targetPath else { return }
+            do {
+                try workspace.save(text, at: targetPath)
+                GooseDraft.save(text)
+                GooseDraft.savePath(targetPath)
+            } catch {
+                workspace.report(error)
+            }
         }
     }
 
@@ -569,6 +691,24 @@ struct ContentView: View {
     }
 
     private func runProgram() {
+        guard !isRunning else { return }
+        guard currentLanguage != .goose else {
+            runGooseProgram()
+            return
+        }
+
+        guard !pistonEndpoint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showingRunnerSettings = true
+            return
+        }
+        guard acceptedPistonEndpoint == pistonEndpoint else {
+            showingRemoteConsent = true
+            return
+        }
+        runRemoteProgram()
+    }
+
+    private func runGooseProgram() {
         guard !isRunning else { return }
         let program = source
         isRunning = true
@@ -593,6 +733,38 @@ struct ContentView: View {
                 status = .ok
                 elapsed = duration
             case let .failure(error):
+                output = "Erro: \(error.localizedDescription)"
+                status = .failure
+            }
+            isRunning = false
+            showOutput = true
+        }
+    }
+
+    private func runRemoteProgram() {
+        guard !isRunning else { return }
+        let program = source
+        let language = currentLanguage
+        let endpoint = pistonEndpoint
+        isRunning = true
+        status = .idle
+        output = ""
+        elapsed = nil
+
+        Task {
+            let started = Date()
+            do {
+                let result = try await PistonCodeRunner.execute(
+                    source: program,
+                    language: language,
+                    endpoint: endpoint
+                )
+                output = result.output
+                status = result.succeeded ? .ok : .failure
+                if result.succeeded {
+                    elapsed = Date().timeIntervalSince(started)
+                }
+            } catch {
                 output = "Erro: \(error.localizedDescription)"
                 status = .failure
             }

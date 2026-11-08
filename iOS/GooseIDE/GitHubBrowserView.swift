@@ -6,6 +6,7 @@ struct GitHubBrowserView: View {
     @ObservedObject var session: GitHubSession
     @Binding var source: String
     @Binding var openFile: GitHubSession.OpenFile?
+    let onWillOpen: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var repositories: [GitHubRepository] = []
@@ -223,6 +224,7 @@ private struct GitHubFileListView: View {
                 in: repository.fullName,
                 ref: branch
             )
+            onWillOpen()
             source = file.text
             let opened = GitHubSession.OpenFile(
                 repository: repository.fullName,
