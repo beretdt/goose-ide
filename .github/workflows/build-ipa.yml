@@ -82,9 +82,9 @@ jobs:
           fi
 
           MIN_OS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract MinimumOSVersion raw -)"
-          PLATFORMS="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleSupportedPlatforms json -)"
-          if ! grep -Fq '"iPhoneOS"' <<< "$PLATFORMS"; then
-            echo "The app bundle does not declare the iPhoneOS platform: $PLATFORMS" >&2
+          PLATFORM="$(unzip -p "$IPA" "$INFO_PLIST" | plutil -extract CFBundleSupportedPlatforms.0 raw -)"
+          if [[ "$PLATFORM" != "iPhoneOS" ]]; then
+            echo "The app bundle does not declare the iPhoneOS platform: ${PLATFORM:-missing}" >&2
             exit 1
           fi
 
@@ -98,12 +98,13 @@ jobs:
           EXECUTABLE_FILE="$(mktemp "$RUNNER_TEMP/GooseIDE-executable.XXXXXX")"
           trap 'rm -f "$EXECUTABLE_FILE"' EXIT
           unzip -p "$IPA" "$EXECUTABLE_PATH" > "$EXECUTABLE_FILE"
-          if ! lipo -verify_arch arm64 "$EXECUTABLE_FILE" >/dev/null 2>&1; then
+          if ! xcrun lipo "$EXECUTABLE_FILE" -verify_arch arm64; then
             echo "The app executable is not a Mach-O binary containing arm64" >&2
+            file "$EXECUTABLE_FILE" >&2
             exit 1
           fi
 
-          echo "Validated IPA: bundle=$BUNDLE_ID minimum-iOS=$MIN_OS platforms=$PLATFORMS architecture=arm64"
+          echo "Validated IPA: bundle=$BUNDLE_ID minimum-iOS=$MIN_OS platform=$PLATFORM architecture=arm64"
 
       - uses: actions/upload-artifact@v4
         with:
