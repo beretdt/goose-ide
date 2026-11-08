@@ -98,7 +98,7 @@ jobs:
           EXECUTABLE_FILE="$(mktemp "$RUNNER_TEMP/GooseIDE-executable.XXXXXX")"
           trap 'rm -f "$EXECUTABLE_FILE"' EXIT
           unzip -p "$IPA" "$EXECUTABLE_PATH" > "$EXECUTABLE_FILE"
-          if ! xcrun lipo -verify_arch arm64 "$EXECUTABLE_FILE"; then
+          if ! xcrun lipo "$EXECUTABLE_FILE" -verify_arch arm64; then
             echo "The app executable is not a Mach-O binary containing arm64" >&2
             file "$EXECUTABLE_FILE" >&2
             exit 1
