@@ -135,6 +135,13 @@ O projeto tem um target iOS com versão mínima 16. O workflow `Unsigned IPA`
 compila o app sem assinar em um runner macOS e publica o `.ipa`; não é
 necessário ter um Mac ou uma conta Apple para gerar o artefato.
 
+> **Limitação conhecida (2026-11-08):** gerar e validar o IPA no CI não garante
+> a instalação no aparelho. O AltServer-Linux testado aqui falha na autenticação
+> Apple com `-80045`, inclusive com Anisette v3 local e o fork Linux mais recente
+> testado. A instalação inicial pelo Kali ainda não está resolvida; acompanhe o
+> [issue #3](https://github.com/beretdt/goose-ide/issues/3). Para testar no
+> iPhone agora, use um Mac ou PC Windows com um fluxo de assinatura compatível.
+
 **1. Baixe o artefato.** O workflow roda manualmente, em pull requests e em
 tags `v*`. Dispare-o pela aba **Actions** ou use:
 
