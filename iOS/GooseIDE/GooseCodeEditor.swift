@@ -370,7 +370,7 @@ enum GooseHighlighter {
         .foregroundColor: UIColor(VSCode.text),
     ]
 
-    private static let keywords: Set<String> = [
+    private static let gooseKeywords: Set<String> = [
         "let", "var", "as", "true", "false", "null", "struct", "enum", "import", "const", "fn"
     ]
 
